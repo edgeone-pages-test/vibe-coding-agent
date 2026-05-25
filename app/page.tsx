@@ -1,0 +1,1691 @@
+'use client';
+
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
+type TimelineStep =
+  | { kind: 'status'; text: string }
+  | { kind: 'assistant_text'; uuid: string; text: string }
+  | { kind: 'tool_use'; id: string; name: string; inputPreview: string }
+  | { kind: 'tool_result'; toolUseId: string; ok: boolean; preview: string }
+  | { kind: 'log'; stream: 'stdout' | 'stderr' | 'status'; text: string }
+  | { kind: 'error'; text: string };
+
+type AssistantStatus = 'running' | 'done' | 'error';
+type NormalizedStepStatus = 'waiting' | 'running' | 'done' | 'error';
+type NormalizedStepPhase = 'scaffold' | 'code' | 'install' | 'preview' | 'link';
+
+type NormalizedStep = {
+  phase: NormalizedStepPhase;
+  title: string;
+  status: NormalizedStepStatus;
+  summary: string;
+};
+
+type ChatMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  steps?: TimelineStep[];
+  status?: AssistantStatus;
+};
+
+type BuildInfo = {
+  status: 'success' | 'failed' | 'skipped';
+  stdout?: string;
+  stderr?: string;
+  autoFixAttempts?: number;
+  autoFixApplied?: boolean;
+};
+
+type LinkInfo = {
+  url?: string;
+  sandboxDebugUrl?: string;
+  filename?: string;
+  error?: string;
+};
+
+type InitLog = {
+  stream: 'status' | 'stdout' | 'stderr';
+  content: string;
+};
+
+type FileTreeItem = {
+  path: string;
+  name: string;
+  type: 'file' | 'directory';
+  depth: number;
+};
+
+type FileTree = {
+  root: string;
+  items: FileTreeItem[];
+};
+
+type ChatResponse = {
+  ok?: boolean;
+  reply?: string;
+  conversation_id?: string;
+  build?: BuildInfo;
+  files?: FileTree;
+  preview?: LinkInfo;
+  download?: LinkInfo;
+  error?: string;
+};
+
+type ChatStreamEvent =
+  | {
+      type: 'status';
+      message?: string;
+    }
+  | {
+      type: 'result';
+      data?: ChatResponse;
+    }
+  | {
+      type: 'agent';
+      data?: Pick<ChatResponse, 'ok' | 'reply' | 'error'>;
+    }
+  | {
+      type: 'file_tree';
+      data?: FileTree;
+    }
+  | {
+      type: 'preview_ready';
+      data?: {
+        preview?: LinkInfo;
+        download?: LinkInfo;
+      };
+    }
+  | {
+      type: 'tool_use';
+      data?: {
+        id?: string;
+        name?: string;
+        inputPreview?: string;
+      };
+    }
+  | {
+      type: 'tool_result';
+      data?: {
+        tool_use_id?: string;
+        ok?: boolean;
+        preview?: string;
+      };
+    }
+  | {
+      type: 'text_segment';
+      data?: {
+        uuid?: string;
+        text?: string;
+      };
+    }
+  | {
+      type: 'error';
+      error?: string;
+    }
+  | {
+      type: 'log';
+      phase?: 'scaffold' | 'agent';
+      stream?: InitLog['stream'];
+      message?: string;
+    };
+
+type Locale = 'zh' | 'en';
+
+const LANGUAGE_STORAGE_KEY = 'web-dev-agent-language';
+const PHASE_ORDER: NormalizedStepPhase[] = ['scaffold', 'code', 'install', 'preview', 'link'];
+
+const TRANSLATIONS = {
+  zh: {
+    languageToggleLabel: 'English',
+    languageToggleAria: 'Switch language to English',
+    home: {
+      titleBefore: '今天想',
+      titleAccent: '创建',
+      titleAfter: '什么？',
+      subtitle: '把一个粗略想法变成精致的应用、网站或原型。',
+      placeholder: '请输入你想构建的内容',
+      buildNow: '立即构建',
+      building: '构建中...',
+      examples: [
+        '为数据分析创业公司搭建一个 SaaS 仪表盘',
+        '为产品设计师创建一个作品集网站',
+        '做一个带统计和主题切换的番茄钟',
+      ],
+    },
+    response: {
+      noDisplay: 'Agent 没有返回可展示的结果。',
+      requestFailedPrefix: '请求失败：',
+      unknownError: '未知错误',
+      agentFlowEnded: 'Agent 流程已结束。',
+      processingFailed: '请求处理失败。',
+    },
+    workspace: {
+      conversationEyebrow: '对话',
+      buildThread: '构建线程',
+      hideSteps: '隐藏',
+      viewSteps: '查看',
+      steps: '步骤',
+      changePlaceholder: '描述你想修改的内容',
+      send: '发送',
+      sandboxEyebrow: '沙箱',
+      livePreview: '实时预览',
+      files: '文件',
+      preview: '预览',
+      downloadSource: '下载源码',
+      loadingPreview: '正在加载实时预览...',
+      previewEmpty: '首次构建完成后会在这里显示预览。',
+      previewError: '预览错误：',
+      downloadError: '下载错误：',
+      buildFailedMessage: '构建失败。源码包仍保留当前文件，便于调试。',
+      buildFailedAfter: (attempts: number) =>
+        `自动修复 ${attempts} 次后构建仍失败。源码包仍保留当前文件，便于调试。`,
+      previewLinkReady: '已获取预览链接。',
+      previewLinkMissing: '预览链接未返回。',
+    },
+    timeline: {
+      empty: '等待 Agent 响应...',
+      processing: '正在处理...',
+      statusLabels: {
+        waiting: '等待中',
+        running: '进行中',
+        done: '完成',
+        error: '失败',
+      },
+      definitions: {
+        scaffold: { title: '初始化沙箱', waiting: '等待准备项目工作区' },
+        code: { title: '写代码', waiting: '等待生成或修改项目文件' },
+        install: { title: '安装依赖', waiting: '等待安装项目依赖' },
+        preview: { title: '启动预览', waiting: '等待启动本地预览服务' },
+        link: { title: '获取链接', waiting: '等待获取预览链接' },
+      },
+      summaries: {
+        scaffoldRunning: '正在准备项目工作区',
+        scaffoldExisting: '已复用现有项目工作区',
+        scaffoldCreated: '已准备空项目工作区',
+        scaffoldReady: '沙箱工作区已准备完成',
+        codeAutoFix: '正在根据验证结果修复项目代码',
+        codeRunningUpdate: '正在更新项目文件',
+        codeWritingFiles: (count: number) => `正在写入 ${count} 个项目文件`,
+        codeUpdated: '已更新项目文件',
+        codeUpdatedFiles: (count: number) => `已更新 ${count} 个项目文件`,
+        installRunning: '正在安装项目依赖',
+        installDone: '项目依赖安装完成',
+        installFailed: '依赖安装失败',
+        previewRunning: '正在启动本地预览服务',
+        previewWarmup: '正在预热预览页面',
+        previewStarted: '预览服务已启动',
+        previewReady: '预览服务已可访问',
+        previewFailed: '预览失败',
+        linkRunning: '正在获取预览链接',
+        linkDone: '预览链接已获取',
+        linkDoneNoUrl: '已完成预览链接获取',
+        linkMissing: '预览链接未返回',
+        processFailed: '处理失败',
+        stepFailed: (title: string) => `${title}失败`,
+        unknownStep: '步骤',
+      },
+    },
+    files: {
+      empty: '暂无文件。',
+      selectFile: '从左侧选择一个文件以预览内容。',
+      loading: (path: string) => `正在加载 ${path}...`,
+      readFailed: '读取失败',
+      requestFailed: '请求失败',
+      lines: (count: number) => `${count} 行`,
+      truncated: '已截断',
+    },
+  },
+  en: {
+    languageToggleLabel: '中文',
+    languageToggleAria: '切换语言为中文',
+    home: {
+      titleBefore: 'What will you',
+      titleAccent: 'create',
+      titleAfter: 'today?',
+      subtitle: 'Turn a rough idea into a polished app, site, or prototype.',
+      placeholder: "Let's build a",
+      buildNow: 'Build now',
+      building: 'Building...',
+      examples: [
+        'Build a SaaS dashboard for an analytics startup',
+        'Create a portfolio site for a product designer',
+        'Make a Pomodoro timer with stats and themes',
+      ],
+    },
+    response: {
+      noDisplay: 'The agent did not return anything displayable.',
+      requestFailedPrefix: 'Request failed: ',
+      unknownError: 'unknown error',
+      agentFlowEnded: 'Agent flow has ended.',
+      processingFailed: 'Request processing failed.',
+    },
+    workspace: {
+      conversationEyebrow: 'Conversation',
+      buildThread: 'Build thread',
+      hideSteps: 'Hide',
+      viewSteps: 'View',
+      steps: 'steps',
+      changePlaceholder: 'Ask for a change',
+      send: 'Send',
+      sandboxEyebrow: 'Sandbox',
+      livePreview: 'Live preview',
+      files: 'Files',
+      preview: 'Preview',
+      downloadSource: 'Download source',
+      loadingPreview: 'Loading live preview...',
+      previewEmpty: 'Preview will appear after the first build finishes.',
+      previewError: 'Preview error: ',
+      downloadError: 'Download error: ',
+      buildFailedMessage: 'Build failed. The source package still keeps the current files for debugging.',
+      buildFailedAfter: (attempts: number) =>
+        `Build failed after ${attempts} auto-fix attempt${attempts === 1 ? '' : 's'}. The source package still keeps the current files for debugging.`,
+      previewLinkReady: 'Preview link found.',
+      previewLinkMissing: 'Preview link was not returned.',
+    },
+    timeline: {
+      empty: 'Waiting for agent response...',
+      processing: 'Processing...',
+      statusLabels: {
+        waiting: 'waiting',
+        running: 'running',
+        done: 'done',
+        error: 'error',
+      },
+      definitions: {
+        scaffold: { title: 'Initialize sandbox', waiting: 'Waiting to prepare the project workspace' },
+        code: { title: 'Write code', waiting: 'Waiting to generate or update project files' },
+        install: { title: 'Install dependencies', waiting: 'Waiting to install project dependencies' },
+        preview: { title: 'Start preview', waiting: 'Waiting to start the local preview server' },
+        link: { title: 'Get link', waiting: 'Waiting to get the preview link' },
+      },
+      summaries: {
+        scaffoldRunning: 'Preparing the project workspace',
+        scaffoldExisting: 'Reused the existing project workspace',
+        scaffoldCreated: 'Prepared an empty project workspace',
+        scaffoldReady: 'Sandbox workspace is ready',
+        codeAutoFix: 'Fixing project code based on validation results',
+        codeRunningUpdate: 'Updating project files',
+        codeWritingFiles: (count: number) => `Writing ${count} project file${count === 1 ? '' : 's'}`,
+        codeUpdated: 'Updated project files',
+        codeUpdatedFiles: (count: number) => `Updated ${count} project file${count === 1 ? '' : 's'}`,
+        installRunning: 'Installing project dependencies',
+        installDone: 'Project dependencies installed',
+        installFailed: 'Dependency installation failed',
+        previewRunning: 'Starting the local preview server',
+        previewWarmup: 'Warming up the preview page',
+        previewStarted: 'Preview server started',
+        previewReady: 'Preview server is reachable',
+        previewFailed: 'Preview failed',
+        linkRunning: 'Getting the preview link',
+        linkDone: 'Preview link retrieved',
+        linkDoneNoUrl: 'Finished getting the preview link',
+        linkMissing: 'Preview link was not returned',
+        processFailed: 'Processing failed',
+        stepFailed: (title: string) => `${title} failed`,
+        unknownStep: 'Step',
+      },
+    },
+    files: {
+      empty: 'No files captured yet.',
+      selectFile: 'Select a file from the left to preview its contents.',
+      loading: (path: string) => `Loading ${path}...`,
+      readFailed: 'Read failed',
+      requestFailed: 'Request failed',
+      lines: (count: number) => `${count} line${count === 1 ? '' : 's'}`,
+      truncated: 'truncated',
+    },
+  },
+} as const;
+
+type UiCopy = (typeof TRANSLATIONS)[Locale];
+type TimelineCopy = UiCopy['timeline'];
+type FileCopy = UiCopy['files'];
+
+// const DEBUG_CONVERSATION_ID =
+//   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+//     ? crypto.randomUUID()
+//     : `debug-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const DEBUG_CONVERSATION_ID = 'pages-agent-conversation-id';
+
+function createMessageId(role: ChatMessage['role']) {
+  return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function withPreviewRevision(url: string, revision: number) {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set('__preview_revision', String(revision));
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function maskConversationIdForLog(value: string | null) {
+  if (!value) return '<empty>';
+  if (value.length <= 12) return `${value.slice(0, 2)}...${value.slice(-2)}`;
+  return `${value.slice(0, 6)}...${value.slice(-6)}`;
+}
+
+export default function Home() {
+  const [language, setLanguage] = useState<Locale>('zh');
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<LinkInfo | null>(null);
+  const [download, setDownload] = useState<LinkInfo | null>(null);
+  const [build, setBuild] = useState<BuildInfo | null>(null);
+  const [loading, setLoading] = useState(false);
+  // 每条 assistant 消息的「过程展开」开关：进行中的那条强制展开，结束后默认收起。
+  const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({});
+  const [sandboxTab, setSandboxTab] = useState<'preview' | 'files'>('preview');
+  const [fileTree, setFileTree] = useState<FileTree | null>(null);
+  const [previewFrameLoaded, setPreviewFrameLoaded] = useState(false);
+  const [previewRevision, setPreviewRevision] = useState(0);
+
+  const t = TRANSLATIONS[language];
+  const canSend = input.trim().length > 0 && !loading;
+  const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    if (stored === 'zh' || stored === 'en') {
+      setLanguage(stored);
+    }
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+  }, [language]);
+
+  // 跨域 iframe 在某些环境下 onLoad 不会触发，3 秒后兜底关闭遮罩，避免一直空白。
+  useEffect(() => {
+    if (!preview?.url || previewFrameLoaded) {
+      return;
+    }
+    const timer = window.setTimeout(() => setPreviewFrameLoaded(true), 3000);
+    return () => window.clearTimeout(timer);
+  }, [preview?.url, previewFrameLoaded, previewRevision]);
+
+  async function sendMessage(message: string) {
+    const trimmed = message.trim();
+    if (!trimmed || loading) {
+      return;
+    }
+
+    const userMessageId = createMessageId('user');
+    const assistantMessageId = createMessageId('assistant');
+
+    setMessages((current) => [
+      ...current,
+      { id: userMessageId, role: 'user', content: trimmed },
+      {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        status: 'running',
+        steps: [],
+      },
+    ]);
+    // 进行中的那条消息默认展开过程；之前轮次的展开状态保留不变。
+    setOpenSteps((current) => ({ ...current, [assistantMessageId]: true }));
+    setFileTree(null);
+    setInput('');
+    setLoading(true);
+    const activatedPreviewUrls = new Set<string>();
+
+    const patchAssistant = (patch: Partial<ChatMessage>) => {
+      setMessages((current) =>
+        current.map((item) =>
+          item.id === assistantMessageId ? { ...item, ...patch } : item,
+        ),
+      );
+    };
+
+    const appendStep = (step: TimelineStep) => {
+      setMessages((current) =>
+        current.map((item) =>
+          item.id === assistantMessageId
+            ? { ...item, steps: [...(item.steps ?? []), step] }
+            : item,
+        ),
+      );
+    };
+
+    const upsertAssistantTextStep = (uuid: string, text: string) => {
+      setMessages((current) =>
+        current.map((item) => {
+          if (item.id !== assistantMessageId) {
+            return item;
+          }
+          const steps = item.steps ?? [];
+          const idx = steps.findIndex((step) => step.kind === 'assistant_text' && step.uuid === uuid);
+          if (idx === -1) {
+            return {
+              ...item,
+              steps: [...steps, { kind: 'assistant_text', uuid, text }],
+            };
+          }
+          return {
+            ...item,
+            steps: steps.map((step, stepIdx) =>
+              stepIdx === idx ? { kind: 'assistant_text', uuid, text } : step,
+            ),
+          };
+        }),
+      );
+    };
+
+    const finalizeAssistant = (
+      finalContent: string,
+      finalStatus: AssistantStatus,
+    ) => {
+      patchAssistant({ content: finalContent, status: finalStatus });
+      // 流结束默认折叠过程，但用户如果手动改过就尊重用户设置（这里直接收起即可，
+      // 因为 running 阶段的强制展开是临时的）。
+      setOpenSteps((current) => ({ ...current, [assistantMessageId]: false }));
+    };
+
+    const activatePreview = (nextPreview: LinkInfo) => {
+      setPreview(nextPreview);
+      if (nextPreview.url) {
+        setPreviewFrameLoaded(false);
+        setSandboxTab('preview');
+        if (!activatedPreviewUrls.has(nextPreview.url)) {
+          activatedPreviewUrls.add(nextPreview.url);
+          setPreviewRevision((current) => current + 1);
+        }
+      }
+    };
+
+    const applyResponse = (data: ChatResponse) => {
+      if (data.conversation_id) {
+        setConversationId(data.conversation_id);
+      }
+      if (data.preview) {
+        activatePreview(data.preview);
+      }
+      if (data.download) {
+        setDownload(data.download);
+      }
+      if (data.build) {
+        setBuild(data.build);
+      }
+      if (data.files) {
+        setFileTree(data.files);
+      }
+
+      const finalText = data.reply || data.error || t.response.noDisplay;
+      const finalStatus: AssistantStatus = data.ok === false ? 'error' : 'done';
+      finalizeAssistant(finalText, finalStatus);
+    };
+
+    // 流式文本累积：按到达顺序记录每条 assistant message 的 uuid 与最新 text，
+    // 拼接成完整 content。result 事件最终会用后端 sanitize 过的 reply 覆盖此值。
+    const textSegments: { uuid: string; text: string }[] = [];
+    const textSegmentIndex = new Map<string, number>();
+    const updateTextSegment = (uuid: string, text: string) => {
+      const idx = textSegmentIndex.get(uuid);
+      if (idx === undefined) {
+        textSegmentIndex.set(uuid, textSegments.length);
+        textSegments.push({ uuid, text });
+      } else {
+        textSegments[idx].text = text;
+      }
+      patchAssistant({ content: textSegments.map((s) => s.text).join('') });
+      upsertAssistantTextStep(uuid, text);
+    };
+
+    const handleStreamEvent = (event: ChatStreamEvent) => {
+      if (event.type === 'status' && event.message) {
+        appendStep({ kind: 'status', text: event.message });
+        return;
+      }
+      if (event.type === 'result' && event.data) {
+        applyResponse(event.data);
+        return;
+      }
+      if (event.type === 'agent' && event.data) {
+        const agentData = event.data;
+        const text = agentData.reply || agentData.error || t.response.noDisplay;
+        // agent 事件先到，但 result 还会带最终聚合（含 build、preview）。
+        // 这里只提前把 reply 写进 content，状态仍保持 running，等 result 再 finalize。
+        patchAssistant({ content: text });
+        return;
+      }
+      if (event.type === 'text_segment' && event.data && event.data.uuid && typeof event.data.text === 'string') {
+        updateTextSegment(event.data.uuid, event.data.text);
+        return;
+      }
+      if (event.type === 'tool_use' && event.data) {
+        appendStep({
+          kind: 'tool_use',
+          id: event.data.id || '',
+          name: event.data.name || '<unknown>',
+          inputPreview: event.data.inputPreview || '',
+        });
+        return;
+      }
+      if (event.type === 'tool_result' && event.data) {
+        appendStep({
+          kind: 'tool_result',
+          toolUseId: event.data.tool_use_id || '',
+          ok: event.data.ok !== false,
+          preview: event.data.preview || '',
+        });
+        return;
+      }
+      if (event.type === 'file_tree' && event.data) {
+        setFileTree(event.data);
+        return;
+      }
+      if (event.type === 'preview_ready' && event.data) {
+        if (event.data.preview) {
+          activatePreview(event.data.preview);
+          appendStep({
+            kind: 'status',
+            text: event.data.preview.url ? t.workspace.previewLinkReady : t.workspace.previewLinkMissing,
+          });
+        }
+        if (event.data.download) {
+          setDownload(event.data.download);
+        }
+        return;
+      }
+      if (event.type === 'error') {
+        appendStep({ kind: 'error', text: event.error || t.response.processingFailed });
+        finalizeAssistant(event.error || t.response.processingFailed, 'error');
+        return;
+      }
+      if (event.type === 'log' && event.message) {
+        appendStep({
+          kind: 'log',
+          stream: (event.stream as 'stdout' | 'stderr' | 'status') || 'stdout',
+          text: event.message || '',
+        });
+      }
+    };
+
+    try {
+      const response = await fetch('/chat', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          conversationId: DEBUG_CONVERSATION_ID,
+          'pages-agent-conversation-id': conversationId || DEBUG_CONVERSATION_ID,
+        },
+        body: JSON.stringify({ message: trimmed }),
+      });
+
+      const contentType = response.headers.get('content-type') || '';
+      if (!response.body || !contentType.includes('application/x-ndjson')) {
+        applyResponse((await response.json()) as ChatResponse);
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim()) {
+            continue;
+          }
+          handleStreamEvent(JSON.parse(line) as ChatStreamEvent);
+        }
+      }
+
+      buffer += decoder.decode();
+      if (buffer.trim()) {
+        handleStreamEvent(JSON.parse(buffer) as ChatStreamEvent);
+      }
+    } catch (error) {
+      const msg = `${t.response.requestFailedPrefix}${error instanceof Error ? error.message : t.response.unknownError}`;
+      appendStep({ kind: 'error', text: msg });
+      finalizeAssistant(msg, 'error');
+    } finally {
+      // 兜底：确保 running 不会因为流意外断开而卡住
+      setMessages((current) =>
+        current.map((item) =>
+          item.id === assistantMessageId && item.status === 'running'
+            ? { ...item, status: 'done', content: item.content || t.response.agentFlowEnded }
+            : item,
+        ),
+      );
+      setOpenSteps((current) => {
+        if (current[assistantMessageId] === false) return current;
+        return { ...current, [assistantMessageId]: false };
+      });
+      setLoading(false);
+    }
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await sendMessage(input);
+  }
+
+  return (
+    <main className="min-h-screen overflow-hidden bg-[#0a0d0b] text-white">
+      <button
+        type="button"
+        onClick={() => setLanguage((current) => (current === 'zh' ? 'en' : 'zh'))}
+        aria-label={t.languageToggleAria}
+        className="fixed right-4 top-4 z-50 rounded-full border border-white/15 bg-[#141917]/90 px-4 py-2 text-sm font-semibold text-[#dff8ef] shadow-lg shadow-black/25 backdrop-blur transition hover:border-[#7bd8b4] hover:text-white"
+      >
+        {t.languageToggleLabel}
+      </button>
+      {!hasWorkspace && (
+        <section className="relative isolate flex min-h-screen flex-col items-center justify-center px-5 py-16 text-center">
+          <div className="hero-glow" />
+          <div className="aurora-band aurora-band-wide" />
+          <div className="aurora-band aurora-band-slim" />
+
+          <div className="relative z-10 w-full max-w-7xl">
+            <h1 className="mx-auto max-w-6xl text-balance text-[clamp(3rem,7vw,6.25rem)] font-extrabold leading-[1.05]">
+              {t.home.titleBefore}
+              {language === 'en' ? ' ' : ''}
+              <span className="build-word">{t.home.titleAccent}</span>
+              {language === 'en' ? ' ' : ''}
+              {t.home.titleAfter}
+            </h1>
+            <p className="mt-6 text-[clamp(1.15rem,1.8vw,2.05rem)] font-semibold text-[#b5c4be]">
+              {t.home.subtitle}
+            </p>
+
+            <form
+              onSubmit={handleSubmit}
+              className="prompt-shell mx-auto mt-16 flex w-full max-w-[1260px] flex-col text-left"
+            >
+              <textarea
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder={t.home.placeholder}
+                className="min-h-[150px] w-full resize-none rounded-t-[20px] border-0 bg-transparent px-8 py-7 text-[clamp(1.25rem,2vw,2rem)] font-medium text-white outline-none placeholder:text-[#bac3bd]"
+              />
+              <div className="flex justify-end px-6">
+                <button
+                  type="submit"
+                  disabled={!canSend}
+                  className="inline-flex min-h-14 w-full items-center justify-center gap-3 rounded-2xl bg-[#45b98e] px-7 py-4 text-lg font-semibold text-white shadow-lg shadow-[#45b98e]/20 transition hover:bg-[#56c99f] disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/45 disabled:shadow-none sm:w-auto sm:min-w-[190px] sm:text-xl"
+                >
+                  {loading ? t.home.building : t.home.buildNow}
+                  <ArrowIcon />
+                </button>
+              </div>
+            </form>
+
+            <div className="mx-auto mt-5 flex w-full max-w-[1260px] flex-wrap justify-center gap-3">
+              {t.home.examples.map((example) => (
+                <button
+                  key={example}
+                  type="button"
+                  onClick={() => setInput(example)}
+                  className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-2 text-sm text-[#cfd5d1] transition hover:border-[#7bd8b4] hover:text-white"
+                >
+                  {example}
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      <section
+        className={`relative z-20 h-screen w-full overflow-hidden p-3 pt-16 md:p-4 md:pt-16 ${
+          hasWorkspace ? 'block' : 'hidden'
+        }`}
+      >
+        <div className="grid h-full min-h-0 grid-rows-[minmax(0,0.44fr)_minmax(0,0.56fr)] gap-4 lg:grid-cols-[420px_minmax(0,1fr)] lg:grid-rows-1">
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-[20px] border border-white/10 bg-[#141917] shadow-2xl shadow-black/35">
+            <header className="border-b border-white/10 p-5">
+              <p className="text-xs uppercase tracking-[0.22em] text-[#7bd8b4]">{t.workspace.conversationEyebrow}</p>
+              <h2 className="mt-2 text-2xl font-semibold">{t.workspace.buildThread}</h2>
+            </header>
+
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+              {messages.map((message) => {
+                if (message.role === 'user') {
+                  return (
+                    <div
+                      key={message.id}
+                      className="ml-8 min-w-0 overflow-hidden break-words rounded-2xl bg-[#5ec7a0] px-4 py-3 text-sm leading-6 text-[#10241d]"
+                    >
+                      <span className="whitespace-pre-wrap">{message.content}</span>
+                    </div>
+                  );
+                }
+
+                const status: AssistantStatus = message.status || 'done';
+                const steps = message.steps ?? [];
+                const isOpen = openSteps[message.id] ?? status === 'running';
+
+                return (
+                  <div
+                    key={message.id}
+                    className="mr-8 min-w-0 overflow-hidden break-words rounded-2xl bg-white/[0.07] px-4 py-3 text-sm leading-6 text-[#ececf0]"
+                  >
+                    {status === 'running' ? (
+                      <AssistantTimeline steps={steps} running copy={t.timeline} />
+                    ) : (
+                      <>
+                        {message.content && <MarkdownMessage content={message.content} />}
+                        {steps.length > 0 && (
+                          <div className="mt-3 border-t border-white/10 pt-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setOpenSteps((current) => ({
+                                  ...current,
+                                  [message.id]: !isOpen,
+                                }))
+                              }
+                              className="flex items-center gap-1.5 text-[11px] font-medium text-[#7bd8b4] transition hover:text-[#a8eccd]"
+                            >
+                              <span aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
+                              {isOpen ? t.workspace.hideSteps : t.workspace.viewSteps}{t.workspace.steps}
+                            </button>
+                            {isOpen && (
+                              <div className="mt-2">
+                                <AssistantTimeline steps={steps} running={false} copy={t.timeline} />
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="space-y-3 border-t border-white/10 p-4">
+              <form onSubmit={handleSubmit} className="flex gap-2">
+                <input
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  placeholder={t.workspace.changePlaceholder}
+                  className="min-h-12 min-w-0 flex-1 rounded-full border border-white/10 bg-black/25 px-4 text-sm outline-none placeholder:text-white/35 focus:border-[#7bd8b4]"
+                />
+                <button
+                  type="submit"
+                  disabled={!canSend}
+                  className="rounded-full bg-[#f2c779] px-5 text-sm font-semibold text-[#21170a] transition hover:bg-[#ffd98a] disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/40"
+                >
+                  {t.workspace.send}
+                </button>
+              </form>
+            </div>
+          </section>
+
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-[20px] border border-white/10 bg-[#141917] shadow-2xl shadow-black/35">
+            <header className="flex flex-col gap-3 border-b border-white/10 p-5 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.22em] text-[#7bd8b4]">{t.workspace.sandboxEyebrow}</p>
+                <h2 className="mt-2 text-2xl font-semibold">
+                  {sandboxTab === 'preview' ? t.workspace.livePreview : t.workspace.files}
+                </h2>
+              </div>
+              <div className="flex flex-col gap-3 md:items-end">
+                <div className="flex rounded-full border border-white/10 bg-black/25 p-1 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setSandboxTab('preview')}
+                    className={`rounded-full px-3 py-1 transition ${
+                      sandboxTab === 'preview'
+                        ? 'bg-[#5ec7a0] text-[#10241d]'
+                        : 'text-[#cfd5d1] hover:text-white'
+                    }`}
+                  >
+                    {t.workspace.preview}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSandboxTab('files')}
+                    className={`rounded-full px-3 py-1 transition ${
+                      sandboxTab === 'files'
+                        ? 'bg-[#5ec7a0] text-[#10241d]'
+                        : 'text-[#cfd5d1] hover:text-white'
+                    }`}
+                  >
+                    {t.workspace.files}
+                    {fileTree?.items.length ? ` ${fileTree.items.length}` : ''}
+                  </button>
+                </div>
+                {download?.url && (
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <a
+                      href={download.url}
+                      download={download.filename || 'source.zip'}
+                      className="rounded-full bg-[#f2c779] px-3 py-1 text-xs font-semibold text-[#21170a] transition hover:bg-[#ffd98a]"
+                    >
+                      {t.workspace.downloadSource}
+                    </a>
+                  </div>
+                )}
+              </div>
+            </header>
+
+            <div className="relative min-h-0 flex-1 overflow-hidden bg-white">
+              {sandboxTab === 'preview' ? (
+                preview?.url ? (
+                  <div className="flex h-full min-h-0 flex-col bg-white">
+                    <div className="relative min-h-0 flex-1 bg-white">
+                      {!previewFrameLoaded && (
+                        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-[#101412]/85 px-6 text-center text-[#b5c4be]">
+                          {t.workspace.loadingPreview}
+                        </div>
+                      )}
+                      <iframe
+                        key={`${preview.url}:${previewRevision}`}
+                        title="sandbox-preview"
+                        src={withPreviewRevision(preview.url, previewRevision)}
+                        onLoad={() => setPreviewFrameLoaded(true)}
+                        className="h-full w-full border-0"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex h-full min-h-0 items-center justify-center bg-[#101412] px-6 text-center text-[#b5c4be]">
+                    {t.workspace.previewEmpty}
+                  </div>
+                )
+              ) : (
+                <FilesPanel
+                  tree={fileTree}
+                  conversationId={conversationId}
+                  copy={t.files}
+                />
+              )}
+            </div>
+
+            {(build?.status === 'failed' || download?.error || preview?.error) && (
+              <div className="space-y-2 border-t border-white/10 bg-[#101412] p-4 text-xs text-[#cfd5d1]">
+                {build?.status === 'failed' && (
+                  <p className="text-rose-300">
+                    {build.autoFixApplied && build.autoFixAttempts
+                      ? t.workspace.buildFailedAfter(build.autoFixAttempts)
+                      : t.workspace.buildFailedMessage}
+                  </p>
+                )}
+                {preview?.error && <p>{t.workspace.previewError}{preview.error}</p>}
+                {download?.error && <p>{t.workspace.downloadError}{download.error}</p>}
+              </div>
+            )}
+          </section>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function AssistantTimeline({
+  steps,
+  running,
+  copy,
+}: {
+  steps: TimelineStep[];
+  running: boolean;
+  copy: TimelineCopy;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const normalizedSteps = useMemo(
+    () => normalizeTimelineSteps(steps, copy),
+    [steps, copy],
+  );
+
+  // 进行中自动滚到底，让最新一步可见。
+  useEffect(() => {
+    if (!running || !scrollRef.current) return;
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [steps.length, normalizedSteps.length, running]);
+
+  return (
+    <div
+      ref={scrollRef}
+      className={`min-w-0 max-w-full space-y-2 overflow-y-auto pr-1 text-[12px] leading-5 ${
+        running ? 'max-h-64' : 'max-h-80'
+      }`}
+    >
+      {normalizedSteps.length === 0 ? (
+        <div className="flex min-w-0 items-center gap-2 text-[#7bd8b4]">
+          <Spinner />
+          <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{copy.empty}</span>
+        </div>
+      ) : (
+        normalizedSteps.map((step) => <NormalizedStepCard key={step.phase} step={step} copy={copy} />)
+      )}
+      {running && normalizedSteps.length > 0 && (
+        <div className="flex min-w-0 items-center gap-2 pt-1 text-[#7bd8b4]">
+          <Spinner />
+          <span className="min-w-0 flex-1 break-words text-[11px] [overflow-wrap:anywhere]">{copy.processing}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function normalizeTimelineSteps(steps: TimelineStep[], copy: TimelineCopy): NormalizedStep[] {
+  const byPhase = new Map<NormalizedStepPhase, NormalizedStep>();
+  const phaseByToolUseId = new Map<string, NormalizedStepPhase>();
+
+  const ensureStep = (phase: NormalizedStepPhase) => {
+    const existing = byPhase.get(phase);
+    if (existing) {
+      return existing;
+    }
+    const definition = copy.definitions[phase];
+    const step: NormalizedStep = {
+      phase,
+      title: definition.title,
+      status: 'waiting',
+      summary: definition.waiting,
+    };
+    byPhase.set(phase, step);
+    return step;
+  };
+
+  const updateStep = (
+    phase: NormalizedStepPhase,
+    status: NormalizedStepStatus,
+    summary: string,
+  ) => {
+    const step = ensureStep(phase);
+    if (step.status === 'error' && status !== 'error') {
+      return;
+    }
+    if (step.status === 'done' && status === 'running') {
+      return;
+    }
+    step.status = status;
+    step.summary = summary;
+  };
+
+  for (const step of steps) {
+    if (step.kind === 'tool_use') {
+      const classification = classifyToolUse(step.name, step.inputPreview, copy);
+      if (!classification) {
+        continue;
+      }
+      phaseByToolUseId.set(step.id, classification.phase);
+      updateStep(classification.phase, 'running', classification.runningSummary);
+      continue;
+    }
+
+    if (step.kind === 'tool_result') {
+      const phase = phaseByToolUseId.get(step.toolUseId);
+      if (!phase) {
+        continue;
+      }
+      if (phase === 'link' && step.ok) {
+        updateStep('preview', 'done', copy.summaries.previewReady);
+      }
+      updateStep(
+        phase,
+        step.ok ? 'done' : 'error',
+        summarizeToolResult(phase, step.ok, step.preview, copy),
+      );
+      continue;
+    }
+
+    if (step.kind === 'status') {
+      const statusUpdate = classifyStatusText(step.text, copy);
+      if (statusUpdate) {
+        if (statusUpdate.phase === 'link' && statusUpdate.status === 'done') {
+          updateStep('preview', 'done', copy.summaries.previewReady);
+        }
+        updateStep(statusUpdate.phase, statusUpdate.status, statusUpdate.summary);
+      }
+      continue;
+    }
+
+    if (step.kind === 'log') {
+      const logUpdate = classifyLogText(step.text, step.stream, copy);
+      if (logUpdate) {
+        updateStep(logUpdate.phase, logUpdate.status, logUpdate.summary);
+      }
+      continue;
+    }
+
+    if (step.kind === 'error') {
+      const phase = /preview|预览|link|链接/i.test(step.text)
+        ? 'link'
+        : isInstallText(step.text)
+          ? 'install'
+          : 'code';
+      updateStep(phase, 'error', compactErrorSummary(step.text, copy.summaries.stepFailed(getStepTitle(phase, copy))));
+    }
+  }
+
+  return PHASE_ORDER
+    .map((phase) => byPhase.get(phase))
+    .filter((step): step is NormalizedStep => Boolean(step));
+}
+
+function NormalizedStepCard({ step, copy }: { step: NormalizedStep; copy: TimelineCopy }) {
+  const isWaiting = step.status === 'waiting';
+  const isRunning = step.status === 'running';
+  const isError = step.status === 'error';
+
+  return (
+    <div
+      className={`rounded-lg border px-3 py-2 ${
+        isError
+          ? 'border-rose-400/30 bg-rose-400/10 text-rose-100'
+          : isWaiting
+            ? 'border-white/10 bg-white/[0.03] text-white/45'
+            : 'border-white/10 bg-white/[0.06] text-[#dff8ef]'
+      }`}
+    >
+      <div className="flex min-w-0 items-start gap-2">
+        <span className="mt-1 flex size-4 shrink-0 items-center justify-center">
+          {isRunning ? (
+            <Spinner />
+          ) : (
+            <span
+              className={`text-xs font-semibold ${
+                isError
+                  ? 'text-rose-300'
+                  : step.status === 'done'
+                    ? 'text-emerald-300'
+                    : 'text-white/30'
+              }`}
+            >
+              {isError ? '!' : step.status === 'done' ? '✓' : '·'}
+            </span>
+          )}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold">{step.title}</div>
+          <div className="mt-0.5 min-w-0 break-words text-[11px] text-white/55 [overflow-wrap:anywhere]">
+            {step.summary}
+          </div>
+        </div>
+        <span
+          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${
+            isError
+              ? 'bg-rose-300/15 text-rose-200'
+              : isRunning
+                ? 'bg-[#7bd8b4]/15 text-[#7bd8b4]'
+                : step.status === 'done'
+                  ? 'bg-emerald-300/15 text-emerald-200'
+                  : 'bg-white/5 text-white/35'
+          }`}
+        >
+          {copy.statusLabels[step.status]}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function classifyToolUse(name: string, inputPreview: string, copy: TimelineCopy): {
+  phase: NormalizedStepPhase;
+  runningSummary: string;
+} | null {
+  const toolName = shortenToolName(name);
+
+  if (toolName === 'ensure_project_scaffold') {
+    return { phase: 'scaffold', runningSummary: copy.summaries.scaffoldRunning };
+  }
+
+  if (toolName === 'write_project_files') {
+    const input = parseJsonPreview(inputPreview);
+    const files = Array.isArray(getRecord(input)?.files) ? getRecord(input)?.files as unknown[] : [];
+    return {
+      phase: 'code',
+      runningSummary: files.length > 0 ? copy.summaries.codeWritingFiles(files.length) : copy.summaries.codeRunningUpdate,
+    };
+  }
+
+  if (toolName === 'get_preview_link') {
+    return { phase: 'link', runningSummary: copy.summaries.linkRunning };
+  }
+
+  if (toolName === 'start_preview_server') {
+    return { phase: 'preview', runningSummary: copy.summaries.previewRunning };
+  }
+
+  if (toolName === 'files') {
+    const input = getRecord(parseJsonPreview(inputPreview));
+    const op = typeof input?.op === 'string' ? input.op : '';
+    if (op === 'write' || op === 'makeDir' || op === 'remove') {
+      return { phase: 'code', runningSummary: copy.summaries.codeRunningUpdate };
+    }
+    return null;
+  }
+
+  if (toolName === 'commands') {
+    const input = getRecord(parseJsonPreview(inputPreview));
+    const cmd = typeof input?.cmd === 'string' ? input.cmd : '';
+    if (isInstallCommand(cmd)) {
+      return { phase: 'install', runningSummary: copy.summaries.installRunning };
+    }
+    if (isPreviewCommand(cmd)) {
+      return { phase: 'preview', runningSummary: copy.summaries.previewRunning };
+    }
+    return null;
+  }
+
+  return null;
+}
+
+function summarizeToolResult(phase: NormalizedStepPhase, ok: boolean, preview: string, copy: TimelineCopy) {
+  if (!ok) {
+    return compactErrorSummary(preview, copy.summaries.stepFailed(getStepTitle(phase, copy)));
+  }
+
+  if (phase === 'scaffold') {
+    const result = getRecord(parseJsonPreview(preview));
+    if (typeof result?.created === 'boolean') {
+      return result.created ? copy.summaries.scaffoldCreated : copy.summaries.scaffoldExisting;
+    }
+    return copy.summaries.scaffoldReady;
+  }
+
+  if (phase === 'code') {
+    const result = getRecord(parseJsonPreview(preview));
+    const written = Array.isArray(result?.written) ? result.written : [];
+    return written.length > 0 ? copy.summaries.codeUpdatedFiles(written.length) : copy.summaries.codeUpdated;
+  }
+
+  if (phase === 'install') {
+    return copy.summaries.installDone;
+  }
+
+  if (phase === 'preview') {
+    return copy.summaries.previewStarted;
+  }
+
+  const result = getRecord(parseJsonPreview(preview));
+  const url = typeof result?.url === 'string'
+    ? result.url
+    : typeof result?.previewUrl === 'string'
+      ? result.previewUrl
+      : '';
+  return url ? copy.summaries.linkDone : copy.summaries.linkDoneNoUrl;
+}
+
+function classifyStatusText(text: string, copy: TimelineCopy): {
+  phase: NormalizedStepPhase;
+  status: NormalizedStepStatus;
+  summary: string;
+} | null {
+  if (/准备项目工作区|执行 Agent 流程|prepare the project workspace|agent flow/i.test(text)) {
+    return { phase: 'scaffold', status: 'running', summary: copy.summaries.scaffoldRunning };
+  }
+  if (/检测到已有工作区|existing project workspace/i.test(text)) {
+    return { phase: 'scaffold', status: 'done', summary: copy.summaries.scaffoldExisting };
+  }
+  if (/已准备空项目工作区|empty project workspace/i.test(text)) {
+    return { phase: 'scaffold', status: 'done', summary: copy.summaries.scaffoldCreated };
+  }
+  if (/自动修复|验证失败|auto-fix|validation/i.test(text)) {
+    return { phase: 'code', status: 'running', summary: copy.summaries.codeAutoFix };
+  }
+  if (/已获取预览链接|预览链接已获取|preview link (found|retrieved)/i.test(text)) {
+    return { phase: 'link', status: 'done', summary: copy.summaries.linkDone };
+  }
+  if (/预览链接未返回|preview link (was not returned|missing)/i.test(text)) {
+    return { phase: 'link', status: 'error', summary: copy.summaries.linkMissing };
+  }
+  return null;
+}
+
+function classifyLogText(text: string, stream: 'stdout' | 'stderr' | 'status', copy: TimelineCopy): {
+  phase: NormalizedStepPhase;
+  status: NormalizedStepStatus;
+  summary: string;
+} | null {
+  if (stream === 'status') {
+    return classifyStatusText(text, copy);
+  }
+  if (stream === 'stderr') {
+    if (isInstallText(text)) {
+      return { phase: 'install', status: 'error', summary: compactErrorSummary(text, copy.summaries.installFailed) };
+    }
+    if (/preview|预览|8080|3000|proxy|link|链接/i.test(text)) {
+      return { phase: 'link', status: 'error', summary: compactErrorSummary(text, copy.summaries.previewFailed) };
+    }
+    return { phase: 'code', status: 'error', summary: compactErrorSummary(text, copy.summaries.processFailed) };
+  }
+  return null;
+}
+
+function parseJsonPreview(value: string): unknown {
+  if (!value.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function getRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function isPreviewCommand(cmd: string) {
+  const normalized = cmd.toLowerCase();
+  return (
+    /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(dev|start)\b/.test(normalized)
+    || /\b(next|vite|astro|nuxt)\s+dev\b/.test(normalized)
+    || /\bpython\s+-m\s+http\.server\b/.test(normalized)
+    || /\b(3000|8080)\b/.test(normalized) && /\b(dev|serve|server|preview|proxy)\b/.test(normalized)
+  );
+}
+
+function isInstallCommand(cmd: string) {
+  const normalized = cmd.toLowerCase();
+  return (
+    /\bnpm\s+(install|i)\b/.test(normalized)
+    || /\bpnpm\s+install\b/.test(normalized)
+    || /\byarn\s+install\b/.test(normalized)
+    || /\bbun\s+install\b/.test(normalized)
+    || /\bpython3?\s+-m\s+pip\s+install\b/.test(normalized)
+    || /\bpip3?\s+install\b/.test(normalized)
+  );
+}
+
+function isInstallText(text: string) {
+  return (
+    isInstallCommand(text)
+    || /\b(dependency|dependencies|package install|install failed|failed to install)\b/i.test(text)
+    || /依赖|安装失败/.test(text)
+  );
+}
+
+function compactErrorSummary(value: string, fallback: string) {
+  const cleaned = value
+    .replace(/\s+/g, ' ')
+    .replace(/"content"\s*:\s*"[^"]+"/g, '"content":"<hidden>"')
+    .trim();
+  if (!cleaned) {
+    return fallback;
+  }
+  return cleaned.length > 140 ? `${cleaned.slice(0, 140)}...` : cleaned;
+}
+
+function getStepTitle(phase: NormalizedStepPhase, copy: TimelineCopy) {
+  return copy.definitions[phase]?.title || copy.summaries.unknownStep;
+}
+
+function shortenToolName(name: string) {
+  // mcp__edgeone-sandbox__files -> files
+  const m = name.match(/^mcp__[^_]+__(.+)$/);
+  return m ? m[1] : name;
+}
+
+function Spinner() {
+  return (
+    <span
+      className="inline-block size-3 animate-spin rounded-full border-2 border-[#7bd8b4]/40 border-t-[#7bd8b4]"
+      aria-hidden="true"
+    />
+  );
+}
+
+function MarkdownMessage({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+        ul: ({ children }) => <ul className="mb-2 list-disc space-y-1 pl-5 last:mb-0">{children}</ul>,
+        ol: ({ children }) => <ol className="mb-2 list-decimal space-y-1 pl-5 last:mb-0">{children}</ol>,
+        li: ({ children }) => <li className="pl-1">{children}</li>,
+        a: ({ children, href }) => (
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className="my-1 inline-flex max-w-full items-center gap-1.5 break-all rounded-full bg-[#5ec7a0] px-3 py-1.5 text-xs font-semibold text-[#10241d] no-underline transition hover:bg-[#74d9b4]"
+          >
+            {children}
+          </a>
+        ),
+        pre: ({ children }) => (
+          <pre className="mb-2 max-w-full overflow-x-auto rounded-lg border border-white/10 bg-black/35 p-3 text-[12px] leading-5 last:mb-0">
+            {children}
+          </pre>
+        ),
+        code: ({ children, className, ...props }) => (
+          <code
+            className={`rounded bg-black/25 px-1 py-0.5 font-mono text-[0.92em] text-[#dff8ef] ${className || ''}`}
+            {...props}
+          >
+            {children}
+          </code>
+        ),
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+}
+
+type FilePreviewState =
+  | { status: 'idle' }
+  | { status: 'loading'; path: string }
+  | {
+      status: 'ready';
+      path: string;
+      content: string;
+      truncated: boolean;
+      size: number;
+    }
+  | { status: 'error'; path: string; error: string };
+
+function FilesPanel({
+  tree,
+  conversationId,
+  copy,
+}: {
+  tree: FileTree | null;
+  conversationId: string | null;
+  copy: FileCopy;
+}) {
+  const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(() => new Set());
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [preview, setPreview] = useState<FilePreviewState>({ status: 'idle' });
+  // 用 ref 记录最近一次发起的请求路径，回调里比对避免被慢请求覆盖。
+  const latestRequestRef = useRef<string | null>(null);
+
+  // 切换会话(file tree root 变了)时清空。
+  useEffect(() => {
+    setCollapsedDirs(new Set());
+    setSelectedPath(null);
+    setPreview({ status: 'idle' });
+    latestRequestRef.current = null;
+  }, [tree?.root]);
+
+  const visibleItems = useMemo(() => {
+    if (!tree) {
+      return [];
+    }
+
+    return tree.items.filter((item) => {
+      for (const collapsedPath of collapsedDirs) {
+        if (item.path !== collapsedPath && item.path.startsWith(`${collapsedPath}/`)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [collapsedDirs, tree]);
+
+  const toggleDirectory = (path: string) => {
+    setCollapsedDirs((current) => {
+      const next = new Set(current);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  };
+
+  const loadFile = async (path: string) => {
+    setSelectedPath(path);
+    latestRequestRef.current = path;
+    setPreview({ status: 'loading', path });
+    try {
+      const headers: HeadersInit = {};
+      const cid = conversationId || DEBUG_CONVERSATION_ID;
+      if (cid) {
+        headers['pages-agent-conversation-id'] = cid;
+        headers['conversationId'] = cid;
+      }
+      console.debug('[file-read:client]', {
+        path,
+        hasConversationId: Boolean(conversationId),
+        conversationId: maskConversationIdForLog(cid),
+        conversationSource: conversationId ? 'state.conversationId' : 'DEBUG_CONVERSATION_ID',
+      });
+      const resp = await fetch(`/file?path=${encodeURIComponent(path)}`, {
+        method: 'GET',
+        headers,
+      });
+      console.debug('[file-read:client]', {
+        path,
+        status: resp.status,
+        ok: resp.ok,
+      });
+      const data = (await resp.json()) as {
+        ok?: boolean;
+        path?: string;
+        content?: string;
+        size?: number;
+        truncated?: boolean;
+        error?: string;
+      };
+      console.debug('[file-read:client]', {
+        path,
+        responsePath: data.path,
+        responseOk: data.ok,
+        responseError: data.error,
+        responseSize: data.size,
+        responseTruncated: data.truncated,
+      });
+      // 如果用户已经点了别的文件,丢弃这次结果。
+      if (latestRequestRef.current !== path) {
+        return;
+      }
+      if (!data.ok) {
+        setPreview({ status: 'error', path, error: data.error || copy.readFailed });
+        return;
+      }
+      setPreview({
+        status: 'ready',
+        path,
+        content: data.content || '',
+        truncated: Boolean(data.truncated),
+        size: typeof data.size === 'number' ? data.size : 0,
+      });
+    } catch (err) {
+      if (latestRequestRef.current !== path) {
+        return;
+      }
+      console.debug('[file-read:client]', {
+        path,
+        error: err instanceof Error ? err.message : copy.requestFailed,
+      });
+      setPreview({
+        status: 'error',
+        path,
+        error: err instanceof Error ? err.message : copy.requestFailed,
+      });
+    }
+  };
+
+  if (!tree || tree.items.length === 0) {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center bg-[#0b0f0d] px-6 text-center text-[#b5c4be]">
+        {copy.empty}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid h-full min-h-0 grid-cols-[280px_minmax(0,1fr)] bg-[#0b0f0d] text-[#d7e5df]">
+      <aside className="flex min-h-0 flex-col border-r border-white/10">
+        <div className="border-b border-white/10 bg-[#101412] px-4 py-3">
+          <p className="truncate text-xs uppercase tracking-[0.16em] text-[#7bd8b4]">
+            {tree.root}
+          </p>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-3">
+          <div className="space-y-0.5 font-mono text-[12px] leading-5">
+            {visibleItems.map((item) => {
+              const isDirectory = item.type === 'directory';
+              const isCollapsed = collapsedDirs.has(item.path);
+              const isSelected = !isDirectory && selectedPath === item.path;
+
+              return (
+                <button
+                  key={item.path}
+                  type="button"
+                  onClick={() => {
+                    if (isDirectory) {
+                      toggleDirectory(item.path);
+                    } else {
+                      loadFile(item.path);
+                    }
+                  }}
+                  className={`flex w-full min-w-max items-center gap-2 rounded px-2 py-1 text-left transition ${
+                    isSelected
+                      ? 'bg-[#7bd8b4]/15 text-[#edfff7]'
+                      : 'text-[#cfe0d9] hover:bg-white/[0.06]'
+                  }`}
+                  style={{ paddingLeft: `${8 + item.depth * 18}px` }}
+                >
+                  <span
+                    className={
+                      isDirectory ? 'text-[#f2c779]' : 'text-[#7bd8b4]'
+                    }
+                    aria-hidden="true"
+                  >
+                    {isDirectory ? (isCollapsed ? '▸' : '▾') : '•'}
+                  </span>
+                  <span className={isDirectory ? 'font-semibold' : ''}>
+                    {item.name}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </aside>
+
+      <div className="flex min-h-0 flex-col">
+        <FileContentView preview={preview} copy={copy} />
+      </div>
+    </div>
+  );
+}
+
+function FileContentView({ preview, copy }: { preview: FilePreviewState; copy: FileCopy }) {
+  if (preview.status === 'idle') {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center px-6 text-center text-[#7d8c85]">
+        {copy.selectFile}
+      </div>
+    );
+  }
+  if (preview.status === 'loading') {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex items-center gap-2 border-b border-white/10 bg-[#101412] px-4 py-3 text-xs text-[#7bd8b4]">
+          <Spinner />
+          <span className="truncate font-mono text-[11px] text-white/55">
+            {copy.loading(preview.path)}
+          </span>
+        </div>
+        <div className="flex flex-1 items-center justify-center text-[#7d8c85]">
+          <Spinner />
+        </div>
+      </div>
+    );
+  }
+  if (preview.status === 'error') {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="border-b border-white/10 bg-[#101412] px-4 py-3">
+          <p className="truncate font-mono text-[11px] text-white/55">{preview.path}</p>
+        </div>
+        <div className="flex flex-1 items-center justify-center px-6 text-center text-rose-300">
+          {preview.error}
+        </div>
+      </div>
+    );
+  }
+
+  const lines = preview.content.split('\n');
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-[#101412] px-4 py-3">
+        <p className="min-w-0 truncate font-mono text-[11px] text-white/65">
+          {preview.path}
+        </p>
+        <div className="flex shrink-0 items-center gap-2 font-mono text-[11px] text-white/40">
+          <span>{copy.lines(lines.length)}</span>
+          <span>{formatFileSize(preview.size)}</span>
+          {preview.truncated && (
+            <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-amber-200">
+              {copy.truncated}
+            </span>
+          )}
+        </div>
+      </div>
+      <pre className="min-h-0 flex-1 overflow-auto bg-[#070a09] py-3 font-mono text-[12px] leading-5 text-[#cfe0d9]">
+        <code>
+          {lines.map((line, lineIndex) => (
+            <span
+              key={lineIndex}
+              className="grid min-w-max grid-cols-[3.5rem_minmax(0,1fr)] gap-3 px-4"
+            >
+              <span className="select-none text-right text-white/25">
+                {lineIndex + 1}
+              </span>
+              <span className="whitespace-pre">{line || ' '}</span>
+            </span>
+          ))}
+        </code>
+      </pre>
+    </div>
+  );
+}
+
+function formatFileSize(bytes: number): string {
+  if (!bytes || bytes < 1024) return `${bytes || 0} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function ArrowIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="size-8 text-[#31755c]"
+      fill="currentColor"
+    >
+      <path d="M4 4.9 21 12 4 19.1l3.2-6.2L16 12l-8.8-.9L4 4.9Z" />
+    </svg>
+  );
+}
+
+function FigmaIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-6" fill="currentColor">
+      <path d="M8 24a4 4 0 0 0 4-4v-4H8a4 4 0 0 0 0 8Zm-4-8a4 4 0 0 1 4-4h4V4H8a4 4 0 0 0 0 8 4 4 0 0 0-4 4ZM8 0a4 4 0 0 0 0 8h4V0H8Zm4 0v8h4a4 4 0 0 0 0-8h-4Zm0 8v8h4a4 4 0 0 0 0-8h-4Z" />
+    </svg>
+  );
+}
+
+function GitHubIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-6" fill="currentColor">
+      <path d="M12 .5A11.5 11.5 0 0 0 8.4 22.9c.58.1.8-.25.8-.56v-2.1c-3.26.7-3.95-1.4-3.95-1.4-.53-1.34-1.3-1.7-1.3-1.7-1.06-.72.08-.7.08-.7 1.18.08 1.8 1.2 1.8 1.2 1.04 1.79 2.74 1.27 3.42.97.1-.75.4-1.27.74-1.56-2.6-.3-5.34-1.3-5.34-5.76 0-1.27.46-2.32 1.2-3.14-.12-.3-.52-1.5.12-3.1 0 0 .98-.32 3.22 1.2a11.1 11.1 0 0 1 5.86 0c2.23-1.52 3.2-1.2 3.2-1.2.65 1.6.25 2.8.13 3.1.75.82 1.2 1.87 1.2 3.14 0 4.47-2.74 5.45-5.35 5.75.42.36.8 1.08.8 2.18v3.23c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z" />
+    </svg>
+  );
+}

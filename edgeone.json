@@ -1,0 +1,13 @@
+{
+  "agents": {
+    "framework": "claude-sdk",
+    "sandbox":{
+      "timeout": 1800
+    }
+  },
+  "cloudFunctions": {
+    "nodejs": {
+      "includeFiles": []
+    }
+  }
+}

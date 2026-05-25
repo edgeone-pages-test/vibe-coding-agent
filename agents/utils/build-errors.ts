@@ -1,0 +1,81 @@
+import {
+  BUILD_ERROR_PROMPT_LIMIT,
+  BUILD_RELATED_PATH_LIMIT,
+} from '../constants';
+import type { BuildResult } from '../types';
+import { truncateForPrompt } from './text';
+
+export function extractBuildRelatedPaths(log: string): string[] {
+  const paths = new Set<string>();
+  const re = /(?:\.\/)?(?:[\w@.-]+\/)*[\w@.-]+\.(?:tsx|ts|jsx|js|mjs|cjs|css|json|html|py)/g;
+  for (const match of log.matchAll(re)) {
+    const path = match[0]
+      .replace(/^\.\//, '')
+      .replace(/[),:;'"`]+$/g, '');
+    if (
+      path
+      && !path.includes('node_modules/')
+      && !path.startsWith('.next/')
+      && !path.startsWith('next/dist/')
+    ) {
+      paths.add(path);
+    }
+    if (paths.size >= BUILD_RELATED_PATH_LIMIT) {
+      break;
+    }
+  }
+  return [...paths];
+}
+
+export function summarizeBuildError(build: BuildResult): { summary: string; paths: string[] } {
+  const stderr = typeof build.stderr === 'string' ? build.stderr.trim() : '';
+  const stdout = typeof build.stdout === 'string' ? build.stdout.trim() : '';
+  const combined = [stderr, stdout].filter(Boolean).join('\n\n--- stdout ---\n\n');
+  const summary = truncateForPrompt(combined || 'Verification command failed without stdout/stderr.', BUILD_ERROR_PROMPT_LIMIT);
+  return {
+    summary,
+    paths: extractBuildRelatedPaths(summary),
+  };
+}
+
+export function buildAutoFixPrompt(
+  originalMessage: string,
+  previousReply: string,
+  build: BuildResult,
+  attempt: number,
+  maxAttempts: number,
+): string {
+  const { summary, paths } = summarizeBuildError(build);
+  return [
+    'There are errors in the generated code. Fix the errors reported.',
+    '',
+    `Auto-fix attempt: ${attempt}/${maxAttempts}.`,
+    '',
+    'Original user request:',
+    originalMessage,
+    '',
+    previousReply ? `Previous assistant summary:\n${previousReply}` : '',
+    '',
+    'Verification error summary:',
+    '```',
+    summary,
+    '```',
+    paths.length
+      ? [
+          '',
+          'The following files may contain errors:',
+          '```',
+          paths.join('\n'),
+          '```',
+        ].join('\n')
+      : '',
+    '',
+    'Requirements:',
+    '- Read the error message carefully and identify the specific issue.',
+    '- Make the smallest complete fix needed for verification to pass.',
+    '- Do not regenerate all files or rewrite unrelated code.',
+    '- After fixing, call start_preview_server and then publish the preview using publish-preview.',
+  ]
+    .filter((part) => part !== '')
+    .join('\n');
+}

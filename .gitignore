@@ -1,0 +1,5 @@
+node_modules
+.edgeone
+.next
+.DS_Store
+.env
