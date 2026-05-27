@@ -27,7 +27,6 @@ import type {
 } from './_types';
 import {
   detectFatalToolError,
-  safeJsonString,
   sanitizeAssistantText,
   truncateForStream,
 } from './utils/_text';
@@ -35,6 +34,73 @@ import {
 function pickEnvValue(context: any, key: string) {
   const value = context?.env?.[key];
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function shortenToolName(name: string) {
+  const match = name.match(/^mcp__[^_]+__(.+)$/);
+  return match ? match[1] : name;
+}
+
+function isInstallCommand(cmd: string) {
+  const normalized = cmd.toLowerCase();
+  return (
+    /\bnpm\s+(install|i)\b/.test(normalized)
+    || /\bpnpm\s+install\b/.test(normalized)
+    || /\byarn\s+install\b/.test(normalized)
+    || /\bbun\s+install\b/.test(normalized)
+    || /\bpython3?\s+-m\s+pip\s+install\b/.test(normalized)
+    || /\bpip3?\s+install\b/.test(normalized)
+  );
+}
+
+function isPreviewCommand(cmd: string) {
+  const normalized = cmd.toLowerCase();
+  return (
+    /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(dev|start)\b/.test(normalized)
+    || /\b(next|vite|astro|nuxt)\s+dev\b/.test(normalized)
+    || /\bpython\s+-m\s+http\.server\b/.test(normalized)
+    || /\b(3000|8080)\b/.test(normalized) && /\b(dev|serve|server|preview|proxy)\b/.test(normalized)
+  );
+}
+
+type ToolProgressPhase = 'scaffold' | 'code' | 'install' | 'preview' | 'link';
+
+function inferToolProgress(name: string, input: unknown): {
+  phaseHint?: ToolProgressPhase;
+  fileCount?: number;
+} {
+  const toolName = shortenToolName(name);
+  if (toolName === 'ensure_project_scaffold') {
+    return { phaseHint: 'scaffold' };
+  }
+  if (toolName === 'get_preview_link') {
+    return { phaseHint: 'link' };
+  }
+  if (toolName === 'start_preview_server') {
+    return { phaseHint: 'preview' };
+  }
+  if (toolName === 'files_write' || toolName === 'files_make_dir' || toolName === 'files_remove') {
+    return { phaseHint: 'code' };
+  }
+  if (toolName === 'write_project_files') {
+    const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    const files = Array.isArray(record.files) ? record.files : [];
+    return {
+      phaseHint: 'code',
+      ...(files.length > 0 ? { fileCount: files.length } : {}),
+    };
+  }
+  if (toolName === 'commands') {
+    const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    const cmd = typeof record.cmd === 'string' ? record.cmd : '';
+    if (isInstallCommand(cmd)) {
+      return { phaseHint: 'install' };
+    }
+    if (isPreviewCommand(cmd)) {
+      return { phaseHint: 'preview' };
+    }
+  }
+  return {};
 }
 
 // Prompt 约束模型的核心约束：理解需求 → 生成/修改项目 → 启动预览服务 → 获取预览链接。
@@ -254,42 +320,25 @@ export async function runCodingAgent(
 
     for await (const event of sdkQuery as AsyncIterable<SDKMessage>) {
       console.log('event', JSON.stringify(event, null, 2));
-      // [诊断探针] 同时把 tool_use / tool_result 摘要事件流给前端，用于在 assistant
-      // 消息里实时展示「正在做什么」。input/preview 都做长度截断，避免大文件 write 把流灌爆。
+      // 只把结构化工具进度转给前端。模型的 thinking / 工具前自述 / tool input
+      // 都不进入 UI，避免暴露底层推理和原始 JSON。
       if (event.type === 'assistant') {
         const blocks = (event as any).message?.content;
-        const evUuid = typeof (event as any).uuid === 'string' ? (event as any).uuid : '';
         if (Array.isArray(blocks)) {
-          // 把本条 assistant message 里所有 text block 串起来，作为一个"段"实时推送到前端。
-          // 前端按 uuid 维护 segment map，到达顺序拼成完整内容，达到分段流式效果。
-          const textPieces: string[] = [];
-          for (const b of blocks) {
-            if (b?.type === 'text' && typeof b.text === 'string' && b.text) {
-              textPieces.push(b.text);
-            }
-          }
-          if (textPieces.length && evUuid) {
-            onProgress?.({
-              type: 'text_segment',
-              data: {
-                uuid: evUuid,
-                text: textPieces.join(''),
-              },
-            });
-          }
           for (const b of blocks) {
             if (b?.type === 'tool_use') {
-              const inputJson = safeJsonString(b.input);
               if (typeof b.id === 'string' && typeof b.name === 'string') {
                 probeToolNames.set(b.id, b.name);
               }
-              // console.log('[probe] tool_use', b.name, 'id=', b.id, 'input=', inputJson);
+              const progress = typeof b.name === 'string'
+                ? inferToolProgress(b.name, b.input)
+                : {};
               onProgress?.({
                 type: 'tool_use',
                 data: {
                   id: typeof b.id === 'string' ? b.id : '',
                   name: typeof b.name === 'string' ? b.name : '<unknown>',
-                  inputPreview: truncateForStream(inputJson, 500),
+                  ...progress,
                 },
               });
             }

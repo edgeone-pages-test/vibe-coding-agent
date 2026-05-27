@@ -6,8 +6,7 @@ import remarkGfm from 'remark-gfm';
 
 type TimelineStep =
   | { kind: 'status'; text: string }
-  | { kind: 'assistant_text'; uuid: string; text: string }
-  | { kind: 'tool_use'; id: string; name: string; inputPreview: string }
+  | { kind: 'tool_use'; id: string; name: string; phaseHint?: NormalizedStepPhase; fileCount?: number }
   | { kind: 'tool_result'; toolUseId: string; ok: boolean; preview: string }
   | { kind: 'log'; stream: 'stdout' | 'stderr' | 'status'; text: string }
   | { kind: 'error'; text: string };
@@ -103,7 +102,8 @@ type ChatStreamEvent =
       data?: {
         id?: string;
         name?: string;
-        inputPreview?: string;
+        phaseHint?: NormalizedStepPhase;
+        fileCount?: number;
       };
     }
   | {
@@ -156,7 +156,7 @@ const TRANSLATIONS = {
       ],
     },
     response: {
-      noDisplay: 'Agent 没有返回可展示的结果。',
+      noDisplay: '已编写完成，请查看结果。',
       requestFailedPrefix: '请求失败：',
       unknownError: '未知错误',
       agentFlowEnded: 'Agent 流程已结束。',
@@ -493,30 +493,6 @@ export default function Home() {
       );
     };
 
-    const upsertAssistantTextStep = (uuid: string, text: string) => {
-      setMessages((current) =>
-        current.map((item) => {
-          if (item.id !== assistantMessageId) {
-            return item;
-          }
-          const steps = item.steps ?? [];
-          const idx = steps.findIndex((step) => step.kind === 'assistant_text' && step.uuid === uuid);
-          if (idx === -1) {
-            return {
-              ...item,
-              steps: [...steps, { kind: 'assistant_text', uuid, text }],
-            };
-          }
-          return {
-            ...item,
-            steps: steps.map((step, stepIdx) =>
-              stepIdx === idx ? { kind: 'assistant_text', uuid, text } : step,
-            ),
-          };
-        }),
-      );
-    };
-
     const finalizeAssistant = (
       finalContent: string,
       finalStatus: AssistantStatus,
@@ -583,22 +559,6 @@ export default function Home() {
       finalizeAssistant(finalText, finalStatus);
     };
 
-    // 流式文本累积：按到达顺序记录每条 assistant message 的 uuid 与最新 text，
-    // 拼接成完整 content。result 事件最终会用后端 sanitize 过的 reply 覆盖此值。
-    const textSegments: { uuid: string; text: string }[] = [];
-    const textSegmentIndex = new Map<string, number>();
-    const updateTextSegment = (uuid: string, text: string) => {
-      const idx = textSegmentIndex.get(uuid);
-      if (idx === undefined) {
-        textSegmentIndex.set(uuid, textSegments.length);
-        textSegments.push({ uuid, text });
-      } else {
-        textSegments[idx].text = text;
-      }
-      patchAssistant({ content: textSegments.map((s) => s.text).join('') });
-      upsertAssistantTextStep(uuid, text);
-    };
-
     const handleStreamEvent = (event: ChatStreamEvent) => {
       if (event.type === 'status' && event.message) {
         appendStep({ kind: 'status', text: event.message });
@@ -621,8 +581,7 @@ export default function Home() {
         patchAssistant({ content: text });
         return;
       }
-      if (event.type === 'text_segment' && event.data && event.data.uuid && typeof event.data.text === 'string') {
-        updateTextSegment(event.data.uuid, event.data.text);
+      if (event.type === 'text_segment') {
         return;
       }
       if (event.type === 'tool_use' && event.data) {
@@ -631,7 +590,8 @@ export default function Home() {
           kind: 'tool_use',
           id: event.data.id || '',
           name: event.data.name || '<unknown>',
-          inputPreview: event.data.inputPreview || '',
+          phaseHint: event.data.phaseHint,
+          fileCount: event.data.fileCount,
         });
         return;
       }
@@ -865,7 +825,7 @@ export default function Home() {
                     ) : (
                       <>
                         {message.content && <MarkdownMessage content={message.content} />}
-                        {steps.length > 0 && (
+                        {hasDisplayableTimelineSteps && (
                           <div className="mt-3 border-t border-white/10 pt-2">
                             <button
                               type="button"
@@ -1054,10 +1014,12 @@ function AssistantTimeline({
       }`}
     >
       {normalizedSteps.length === 0 ? (
-        <div className="flex min-w-0 items-center gap-2 text-[#7bd8b4]">
-          <Spinner />
-          <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{copy.empty}</span>
-        </div>
+        running ? (
+          <div className="flex min-w-0 items-center gap-2 text-[#7bd8b4]">
+            <Spinner />
+            <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{copy.empty}</span>
+          </div>
+        ) : null
       ) : (
         normalizedSteps.map((step) => <NormalizedStepCard key={step.phase} step={step} copy={copy} />)
       )}
@@ -1106,7 +1068,7 @@ function normalizeTimelineSteps(steps: TimelineStep[], copy: TimelineCopy): Norm
 
   for (const step of steps) {
     if (step.kind === 'tool_use') {
-      const classification = classifyToolUse(step.name, step.inputPreview, copy);
+      const classification = classifyToolUse(step, copy);
       if (!classification) {
         continue;
       }
@@ -1222,22 +1184,29 @@ function NormalizedStepCard({ step, copy }: { step: NormalizedStep; copy: Timeli
   );
 }
 
-function classifyToolUse(name: string, inputPreview: string, copy: TimelineCopy): {
+function classifyToolUse(step: Extract<TimelineStep, { kind: 'tool_use' }>, copy: TimelineCopy): {
   phase: NormalizedStepPhase;
   runningSummary: string;
 } | null {
-  const toolName = shortenToolName(name);
+  if (step.phaseHint) {
+    return {
+      phase: step.phaseHint,
+      runningSummary: step.phaseHint === 'code' && step.fileCount && step.fileCount > 0
+        ? copy.summaries.codeWritingFiles(step.fileCount)
+        : getRunningSummary(step.phaseHint, copy),
+    };
+  }
+
+  const toolName = shortenToolName(step.name);
 
   if (toolName === 'ensure_project_scaffold') {
     return { phase: 'scaffold', runningSummary: copy.summaries.scaffoldRunning };
   }
 
   if (toolName === 'write_project_files') {
-    const input = parseJsonPreview(inputPreview);
-    const files = Array.isArray(getRecord(input)?.files) ? getRecord(input)?.files as unknown[] : [];
     return {
       phase: 'code',
-      runningSummary: files.length > 0 ? copy.summaries.codeWritingFiles(files.length) : copy.summaries.codeRunningUpdate,
+      runningSummary: copy.summaries.codeRunningUpdate,
     };
   }
 
@@ -1258,18 +1227,18 @@ function classifyToolUse(name: string, inputPreview: string, copy: TimelineCopy)
   }
 
   if (toolName === 'commands') {
-    const input = getRecord(parseJsonPreview(inputPreview));
-    const cmd = typeof input?.cmd === 'string' ? input.cmd : '';
-    if (isInstallCommand(cmd)) {
-      return { phase: 'install', runningSummary: copy.summaries.installRunning };
-    }
-    if (isPreviewCommand(cmd)) {
-      return { phase: 'preview', runningSummary: copy.summaries.previewRunning };
-    }
     return null;
   }
 
   return null;
+}
+
+function getRunningSummary(phase: NormalizedStepPhase, copy: TimelineCopy) {
+  if (phase === 'scaffold') return copy.summaries.scaffoldRunning;
+  if (phase === 'code') return copy.summaries.codeRunningUpdate;
+  if (phase === 'install') return copy.summaries.installRunning;
+  if (phase === 'preview') return copy.summaries.previewRunning;
+  return copy.summaries.linkRunning;
 }
 
 function summarizeToolResult(phase: NormalizedStepPhase, ok: boolean, preview: string, copy: TimelineCopy) {

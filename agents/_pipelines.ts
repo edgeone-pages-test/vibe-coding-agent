@@ -369,11 +369,12 @@ export async function runChatPipeline(context: any, message: string, send: Strea
     forwardProgress,
     pushEarlyFileTree,
   );
+  const fallbackReply = modelResult.success ? '已编写完成，请查看结果。' : (modelResult.error || '处理过程中出现异常，请重试。');
   const assistantReply = stripReturnedPreviewLinks(sanitizeAssistantText(
     modelResult.success && modelResult.output
       ? modelResult.output
-      : modelResult.error || 'Agent 没有生成有效回复。'
-  ) || 'Agent 没有生成有效回复。', state.previewUrl);
+      : fallbackReply
+  ) || fallbackReply, state.previewUrl);
 
   send({
     type: 'agent',

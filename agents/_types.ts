@@ -60,7 +60,8 @@ export type AgentProgressEvent =
       data: {
         id: string;
         name: string;
-        inputPreview: string;
+        phaseHint?: 'scaffold' | 'code' | 'install' | 'preview' | 'link';
+        fileCount?: number;
       };
     }
   | {
