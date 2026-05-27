@@ -164,7 +164,7 @@ export function buildPreviewLinkTool(
 ) {
   return defineClaudeTool(
     'get_preview_link',
-    'Return the public preview URL generated from sandbox.getHost(3000) plus access_token and an optional sandboxDebugUrl for inspecting the sandbox itself. Do not synthesize either field — only use this tool result.',
+    'Return the public preview URL generated from sandbox.getHost(3000) plus envdAccessToken and an optional sandboxDebugUrl from sandbox.browser.liveUrl. Do not synthesize either field — only use this tool result.',
     {},
     async () => {
       try {

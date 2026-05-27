@@ -16,7 +16,7 @@ npm run dev
 - Agent 框架：`claude-sdk`
 - 单会话单项目：`projects/<conversation_id>/app`
 - 项目类型：由 Agent 按用户需求生成，可为 Next.js、Vite/React、静态前端、Node 服务、Python 服务等
-- 预览端口：`9000`
+- 预览端口：`3000`
 - 源码下载端口：`3001`
 - 下载文件：`source.zip`
 
@@ -48,4 +48,5 @@ npm run dev
 
 - 每次代码改动后都会先刷新源码包，再执行可用的验证命令：有 `package.json` 且包含 `scripts.build` 时执行 `npm run build`，Python 项目会尝试 `python -m compileall .`，否则跳过验证
 - 即使验证失败，源码包也会保留最新失败现场，方便下载排查
-- 预览服务固定启动在 3000 端口，预览链接由 `getHost(3000)` 返回的地址拼接 `access_token` 后交给前端消费
+- 预览服务固定启动在 3000 端口，预览链接由 `getHost(3000)` 返回的地址拼接 `envdAccessToken` 后交给前端消费
+- Sandbox 由 Pages Agent Runtime 注入，模板不要求在 `.env` 中配置 sandbox API token、`PROJECT_ID`、`SANDBOX_API_BASE` 或 `API_ENV`

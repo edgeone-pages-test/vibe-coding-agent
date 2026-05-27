@@ -9,7 +9,7 @@ You have just finished editing files in the project's app directory, installed d
 
 ## Step 1 — Confirm HTTP readiness
 
-Call `mcp__edgeone-sandbox__commands` with `timeoutMs: 35000` and:
+Call `mcp__edgeone-sandbox__commands` with `timeout: 35` and:
 
 ```sh
 for i in $(seq 1 30); do curl -fsS http://127.0.0.1:3000 >/dev/null && exit 0; sleep 1; done; exit 1

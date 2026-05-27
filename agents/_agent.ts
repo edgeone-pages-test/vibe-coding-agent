@@ -66,14 +66,14 @@ export function buildPrompt(
       '1. 根据用户需求确定技术栈和文件列表。',
       '2. 调用 write_project_files 一次或少数几次批量写入完整可运行文件；参数必须是 {"files":[{"path":"相对路径","content":"完整文件内容"}]}。',
       '3. 根据生成的项目安装依赖；Node/前端项目默认使用 npm install，用户明确要求 pnpm/yarn 时可使用对应包管理器；Python 项目使用 python -m pip install -r requirements.txt。',
-      `4. 调用 start_preview_server 工具启动内部 ${PREVIEW_SERVER_PORT} 端口服务；公开预览由 get_preview_link 通过 sandbox.getHost(${PREVIEW_SERVER_PORT}) 加 access_token 生成，不要手写 npm run dev 后台命令。`,
+      `4. 调用 start_preview_server 工具启动内部 ${PREVIEW_SERVER_PORT} 端口服务；公开预览由 get_preview_link 通过 sandbox.getHost(${PREVIEW_SERVER_PORT}) 加 envdAccessToken 生成，不要手写 npm run dev 后台命令。`,
       `5. 使用 publish-preview skill 确认 HTTP 就绪并调用 get_preview_link；不要调用 browser 工具预热、fetch 或截图。`,
     ].join('\n'),
     '不要只写占位页面；生成的文件必须完整、内部一致、可直接安装和运行。',
     '优先用 write_project_files 创建或替换多个项目文件；路径必须是相对项目目录的路径，files 必须优先传数组，不要传字符串。',
     'write_project_files / files_write 只用于 UTF-8 文本源码和配置，不得写入图片、字体、音视频、压缩包等二进制资源，也不要把大段 base64 当作文本写入。',
     '尽量不要生成图片、字体、音视频、压缩包等二进制文件；优先使用 CSS、SVG、emoji、远程公开资源链接或现有依赖能力实现视觉效果，以节约 token 和写入成本。',
-    '仅当用户明确要求、功能确实依赖、且没有轻量替代方案时，才允许创建二进制资源；此时必须使用沙箱 command.exec 在项目目录内生成、下载或解码资源，不得用文件写入工具直接写。',
+    '仅当用户明确要求、功能确实依赖、且没有轻量替代方案时，才允许创建二进制资源；此时必须使用沙箱 commands 工具在项目目录内生成、下载或解码资源，不得用文件写入工具直接写。',
     '禁止手写 lockfile、node_modules、.next、dist、build、缓存目录或包管理器生成物。',
     '命令失败时必须先阅读错误并定位具体问题；只修复具体文件、依赖或配置，不要整体重生成项目，不要重复执行同一个失败修复。',
     '优先做最小且完整的修改，保持现有项目结构和风格；不要做与用户需求无关的重构。',
@@ -165,6 +165,9 @@ export async function runCodingAgent(
   }
   try {
     const mcpServerName = SANDBOX_MCP_SERVER_NAME;
+    if (typeof context.tools?.toClaudeMcpServer !== 'function') {
+      throw new Error('当前 Pages Agent Runtime 缺少 context.tools.toClaudeMcpServer，请升级到支持 pages-agent-toolkit 新 Tools API 的运行时。');
+    }
     const edgeoneMcp = context.tools.toClaudeMcpServer(mcpServerName, { alwaysLoad: true });
     let projectTouched = false;
     let wasCreated = false;

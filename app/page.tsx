@@ -1249,12 +1249,11 @@ function classifyToolUse(name: string, inputPreview: string, copy: TimelineCopy)
     return { phase: 'preview', runningSummary: copy.summaries.previewRunning };
   }
 
-  if (toolName === 'files') {
-    const input = getRecord(parseJsonPreview(inputPreview));
-    const op = typeof input?.op === 'string' ? input.op : '';
-    if (op === 'write' || op === 'makeDir' || op === 'remove') {
-      return { phase: 'code', runningSummary: copy.summaries.codeRunningUpdate };
-    }
+  if (toolName === 'files_write' || toolName === 'files_make_dir' || toolName === 'files_remove') {
+    return { phase: 'code', runningSummary: copy.summaries.codeRunningUpdate };
+  }
+
+  if (toolName === 'files_read' || toolName === 'files_list' || toolName === 'files_exists') {
     return null;
   }
 

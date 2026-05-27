@@ -79,16 +79,4 @@ export type AgentProgressEvent =
       };
     };
 
-export type PlatformTool = {
-  name?: string;
-  description?: string;
-  function?: {
-    name?: string;
-    description?: string;
-  };
-  execute?: (args: Record<string, any>) => unknown | Promise<unknown>;
-  handler?: (args: Record<string, any>, extra?: unknown) => unknown | Promise<unknown>;
-  invoke?: (args: Record<string, any>) => unknown | Promise<unknown>;
-};
-
 export type ClaudeMcpTool = SdkMcpToolDefinition<any>;

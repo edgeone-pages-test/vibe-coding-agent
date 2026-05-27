@@ -4,7 +4,6 @@ import {
   PREVIEW_SERVER_PORT,
   PREVIEW_BINARY_EXTENSIONS,
   PREVIEW_MAX_BYTES,
-  SANDBOX_DEBUG_PORT,
 } from './_constants';
 import type { BuildResult, BuildStatus, FileTreeItem, ProjectState, ScaffoldLog } from './_types';
 import { readFileExtension, safeSegment } from './utils/_paths';
@@ -37,7 +36,7 @@ export async function ensureProjectScaffold(
     ].join(' '),
     {
       cwd: state.appDir,
-      timeout: 60 * 1000,
+      timeout: 60,
     },
   );
   if (existing.exitCode !== 0) {
@@ -54,9 +53,7 @@ export async function ensureProjectScaffold(
   const sandboxInfo = context.sandbox.getInfo();
   console.log('沙箱信息', {
     hasInstanceId: Boolean(sandboxInfo?.instanceId),
-    hasSandboxDomain: Boolean(sandboxInfo?.sandboxDomain),
-    hasSandboxToken: Boolean(sandboxInfo?.sandboxToken),
-    sandboxDebugPort: SANDBOX_DEBUG_PORT,
+    expiresAt: sandboxInfo?.expiresAt,
   });
   return true;
 }
@@ -69,14 +66,14 @@ export async function runVerification(context: any, state: ProjectState): Promis
         'node -e "const p=require(\'./package.json\'); process.exit(p.scripts && p.scripts.build ? 0 : 2)"',
         {
           cwd: state.appDir,
-          timeout: 30 * 1000,
+          timeout: 30,
         },
       );
 
       if (hasBuildScript.exitCode === 0) {
         const result = await context.sandbox.commands.run('npm run build', {
           cwd: state.appDir,
-          timeout: 10 * 60 * 1000,
+          timeout: 600,
         });
 
         return {
@@ -103,7 +100,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
       ].join(' '),
       {
         cwd: state.appDir,
-        timeout: 30 * 1000,
+        timeout: 30,
       },
     );
 
@@ -118,7 +115,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
     if (pythonFiles.stdout.trim()) {
       const result = await context.sandbox.commands.run('python -m compileall .', {
         cwd: state.appDir,
-        timeout: 5 * 60 * 1000,
+        timeout: 300,
       });
 
       return {
@@ -159,7 +156,7 @@ export async function getFileTree(context: any, state: ProjectState): Promise<Fi
     ].join(' '),
     {
       cwd: state.appDir,
-      timeout: 30 * 1000,
+      timeout: 30,
     },
   );
 
@@ -189,28 +186,19 @@ export async function getFileTree(context: any, state: ProjectState): Promise<Fi
 }
 
 export async function resolvePublicLinks(context: any) {
-  const sandboxInfo = context.sandbox.getInfo();
-
   const previewHost = context.sandbox.getHost(PREVIEW_SERVER_PORT);
-
-  const { instanceId, sandboxDomain, sandboxToken } = sandboxInfo || {};
-  const encodedToken = typeof sandboxToken === 'string' && sandboxToken
-    ? encodeURIComponent(sandboxToken)
-    : '';
+  const accessToken = context.sandbox.envdAccessToken;
   const previewBaseUrl = normalizePublicUrl(previewHost);
+  const sandboxDebugUrl = normalizePublicUrl(context.sandbox.browser?.liveUrl);
   console.log('检查预览链接生成条件', {
     port: PREVIEW_SERVER_PORT,
     hasPreviewHost: Boolean(previewBaseUrl),
-    hasSandboxToken: Boolean(encodedToken),
+    hasEnvdAccessToken: Boolean(accessToken),
+    hasSandboxDebugUrl: Boolean(sandboxDebugUrl),
   });
 
-  const previewUrl = (previewBaseUrl && sandboxToken)
-    ? appendAccessToken(previewBaseUrl, sandboxToken)
-    : undefined;
-
-  // 沙箱调试入口：固定 9000 端口的沙箱外网地址，供开发者排查沙箱本身。
-  const sandboxDebugUrl = (instanceId && sandboxDomain && sandboxToken)
-    ? `https://${SANDBOX_DEBUG_PORT}-${instanceId}.${sandboxDomain}/?access_token=${encodedToken}`
+  const previewUrl = (previewBaseUrl && accessToken)
+    ? appendAccessToken(previewBaseUrl, accessToken)
     : undefined;
 
   return {
@@ -340,7 +328,7 @@ export async function startPreviewServer(context: any, state: ProjectState) {
       'fi;',
       'sleep 1',
     ].join(' '),
-    { timeout: 10 * 1000 },
+    { timeout: 10 },
   );
 
   if (release.exitCode !== 0) {
@@ -352,7 +340,7 @@ export async function startPreviewServer(context: any, state: ProjectState) {
     `: > /tmp/dev.log; ${start.command}`,
     {
       cwd: state.appDir,
-      timeout: 10 * 1000,
+      timeout: 10,
     },
   );
 
@@ -367,7 +355,7 @@ export async function startPreviewServer(context: any, state: ProjectState) {
       'tail -n 120 /tmp/dev.log >&2 || true;',
       'exit 1',
     ].join(' '),
-    { timeout: 35 * 1000 },
+    { timeout: 35 },
   );
 
   if (ready.exitCode !== 0) {
@@ -385,7 +373,7 @@ export async function startPreviewServer(context: any, state: ProjectState) {
 export async function assertPreviewServerReady(context: any) {
   const result = await context.sandbox.commands.run(
     `curl -fsS http://127.0.0.1:${PREVIEW_SERVER_PORT} >/dev/null`,
-    { timeout: 10 * 1000 },
+    { timeout: 10 },
   );
 
   if (result.exitCode !== 0) {
@@ -476,7 +464,7 @@ async function readPackageMetadata(
     ].join(''),
     {
       cwd: state.appDir,
-      timeout: 10 * 1000,
+      timeout: 10,
     },
   );
 
@@ -506,7 +494,7 @@ async function detectPythonPreviewCommand(
     ].join(' '),
     {
       cwd: state.appDir,
-      timeout: 10 * 1000,
+      timeout: 10,
     },
   );
 
@@ -566,7 +554,7 @@ export async function readFileFromSandbox(
   try {
     result = await context.sandbox.commands.run(cmd, {
       cwd: state.appDir,
-      timeout: 15 * 1000,
+      timeout: 15,
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : '读取失败' };

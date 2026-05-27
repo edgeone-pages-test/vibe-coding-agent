@@ -1,5 +1,4 @@
 // 应用 dev server 监听内部 3000；公开预览地址由 sandbox.getHost(3000) 生成。
-export const SANDBOX_DEBUG_PORT = 9000;
 export const PREVIEW_SERVER_PORT = 3000;
 export const HISTORY_FETCH_LIMIT = 50;
 export const AUTO_FIX_MAX_ATTEMPTS = 1;
