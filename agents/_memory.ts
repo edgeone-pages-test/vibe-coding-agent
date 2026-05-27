@@ -1,7 +1,7 @@
-import { HISTORY_FETCH_LIMIT } from './constants';
-import { createProjectState } from './project';
-import type { ConversationMessage, ProjectState } from './types';
-import { sanitizeAssistantText } from './utils/text';
+import { HISTORY_FETCH_LIMIT } from './_constants';
+import { createProjectState } from './_project';
+import type { ConversationMessage, ProjectState } from './_types';
+import { sanitizeAssistantText } from './utils/_text';
 
 export async function getHistory(context: any, conversationId: string): Promise<ConversationMessage[]> {
   // context.store 只暴露 conversation 维度的消息 API，没有通用 KV。

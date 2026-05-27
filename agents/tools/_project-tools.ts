@@ -5,10 +5,10 @@ import {
   ensureProjectScaffold,
   resolvePublicLinks,
   startPreviewServer,
-} from '../project';
-import type { ClaudeMcpTool, ProjectFileInput, ProjectState, ScaffoldLog } from '../types';
-import { getBlockedProjectWriteReason, normalizeRelPath } from '../utils/paths';
-import { stringifyToolResult } from '../utils/text';
+} from '../_project';
+import type { ClaudeMcpTool, ProjectFileInput, ProjectState, ScaffoldLog } from '../_types';
+import { getBlockedProjectWriteReason, normalizeRelPath } from '../utils/_paths';
+import { stringifyToolResult } from '../utils/_text';
 
 const projectFileSchema = z.object({
   path: z.string().describe('Relative file path under appDir'),

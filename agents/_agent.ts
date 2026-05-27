@@ -11,26 +11,26 @@ import {
   GATEWAY_QUOTA_PROMPT_HEADER,
   PREVIEW_SERVER_PORT,
   SANDBOX_MCP_SERVER_NAME,
-} from './constants';
+} from './_constants';
 import {
   buildPreviewLinkTool,
   buildProjectScaffoldTool,
   buildStartPreviewServerTool,
   buildWriteProjectFilesTool,
-} from './tools/project-tools';
+} from './tools/_project-tools';
 import type {
   AgentProgressEvent,
   CodingAgentResult,
   ConversationMessage,
   ProjectState,
   ScaffoldLog,
-} from './types';
+} from './_types';
 import {
   detectFatalToolError,
   safeJsonString,
   sanitizeAssistantText,
   truncateForStream,
-} from './utils/text';
+} from './utils/_text';
 
 function pickEnvValue(context: any, key: string) {
   const value = context?.env?.[key];
@@ -78,6 +78,7 @@ export function buildPrompt(
     '命令失败时必须先阅读错误并定位具体问题；只修复具体文件、依赖或配置，不要整体重生成项目，不要重复执行同一个失败修复。',
     '优先做最小且完整的修改，保持现有项目结构和风格；不要做与用户需求无关的重构。',
     'Next.js 项目必须使用 App Router 常规结构；配置文件使用 next.config.js 或 next.config.mjs，不要生成 next.config.ts。',
+    'Vite 项目不要在 vite.config 中硬编码临时沙箱预览域名；如果需要配置 server.allowedHosts，只能从 process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS 读取并填入显式列表，不要设置 allowedHosts: true。',
     '如果生成 TypeScript 项目，确保导入、类型和路由用法能通过构建或验证。',
     '不要在回复里粘贴大段代码；最终回复默认使用用户当前 prompt 的主要语言，中英混合时跟随主要语言；技术名词、错误日志、非预览链接原文保留。',
     '不要声明未验证成功的结果；如果失败，简洁说明失败点和下一步。',

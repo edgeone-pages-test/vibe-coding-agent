@@ -1,9 +1,9 @@
 import {
   BUILD_ERROR_PROMPT_LIMIT,
   BUILD_RELATED_PATH_LIMIT,
-} from '../constants';
-import type { BuildResult } from '../types';
-import { truncateForPrompt } from './text';
+} from '../_constants';
+import type { BuildResult } from '../_types';
+import { truncateForPrompt } from './_text';
 
 export function extractBuildRelatedPaths(log: string): string[] {
   const paths = new Set<string>();

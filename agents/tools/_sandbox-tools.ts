@@ -1,8 +1,8 @@
 import { tool as defineClaudeTool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { SANDBOX_MCP_SERVER_NAME } from '../constants';
-import type { ClaudeMcpTool, PlatformTool } from '../types';
-import { stringifyToolResult } from '../utils/text';
+import { SANDBOX_MCP_SERVER_NAME } from '../_constants';
+import type { ClaudeMcpTool, PlatformTool } from '../_types';
+import { stringifyToolResult } from '../utils/_text';
 
 const TOOL_INPUT_SCHEMAS = {
   commands: {

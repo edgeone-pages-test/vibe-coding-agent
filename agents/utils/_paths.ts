@@ -2,7 +2,7 @@ import {
   BLOCKED_PROJECT_WRITE_EXTENSIONS,
   BLOCKED_PROJECT_WRITE_FILENAMES,
   BLOCKED_PROJECT_WRITE_SEGMENTS,
-} from '../constants';
+} from '../_constants';
 
 // 会话 ID 进入沙箱目录前先收敛字符集，保证不同运行环境下路径都稳定可用。
 export function safeSegment(value: string) {

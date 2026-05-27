@@ -94,6 +94,7 @@ export function safeJsonString(input: unknown): string {
 // - "Not Found"：EdgeOne LazySandbox 在某些路由未初始化时的特征响应
 // - "Sandbox is not initialized"：LazySandbox 抛出的初始化错误
 // - "Running instances limit exceeded"：沙箱实例配额已满，后续重试/构建/预览都没有意义
+// - "Duplicate request detected"：沙箱启动请求重复，继续跑 agent 会污染上下文
 // 命中任意一条就视为致命错误，应立即终止本轮 agent，不再让模型重试。
 export function detectFatalToolError(text: string): string | null {
   if (!text) return null;
@@ -108,6 +109,9 @@ export function detectFatalToolError(text: string): string | null {
   }
   if (/Running instances limit exceeded(?:\s*\(max\s+\d+\))?/i.test(trimmed)) {
     return 'EdgeOne 沙箱运行实例数已达上限，已终止本轮 Agent。';
+  }
+  if (/Duplicate request detected\.\s*Please check your previous request result\.?/i.test(trimmed)) {
+    return 'EdgeOne 沙箱启动请求重复，已终止本轮 Agent。';
   }
   return null;
 }

@@ -1,26 +1,26 @@
-import { runCodingAgent } from './agent';
-import { AUTO_FIX_MAX_ATTEMPTS } from './constants';
+import { runCodingAgent } from './_agent';
+import { AUTO_FIX_MAX_ATTEMPTS } from './_constants';
 import {
   appendTurn,
   getHistory,
   getProjectState,
   saveProjectState,
-} from './memory';
+} from './_memory';
 import {
   getFileTree,
   readFileFromSandbox,
   runVerification,
-} from './project';
+} from './_project';
 import type {
   AgentProgressEvent,
   BuildStatus,
   FileTreeItem,
   ScaffoldLog,
   StreamSend,
-} from './types';
-import { buildAutoFixPrompt } from './utils/build-errors';
-import { normalizeRelPath } from './utils/paths';
-import { sanitizeAssistantText } from './utils/text';
+} from './_types';
+import { buildAutoFixPrompt } from './utils/_build-errors';
+import { normalizeRelPath } from './utils/_paths';
+import { sanitizeAssistantText } from './utils/_text';
 
 function stripReturnedPreviewLinks(text: string, previewUrl?: string) {
   if (!text || !previewUrl) {
@@ -287,6 +287,8 @@ export async function runChatPipeline(context: any, message: string, send: Strea
 
   const state = await getProjectState(context, conversationId);
   const history = await getHistory(context, conversationId);
+  const isInitialProjectTurn = !state.created;
+  const hiddenScaffoldToolUseIds = new Set<string>();
 
   send({
     type: 'status',
@@ -294,6 +296,9 @@ export async function runChatPipeline(context: any, message: string, send: Strea
   });
 
   const handleScaffoldLog = (log: ScaffoldLog) => {
+    if (!isInitialProjectTurn) {
+      return;
+    }
     send({
       type: 'log',
       phase: 'scaffold',
@@ -303,6 +308,17 @@ export async function runChatPipeline(context: any, message: string, send: Strea
   };
   const forwardProgress = (event: AgentProgressEvent) => {
     // 直接转发结构化过程事件给前端，前端按 type 分支渲染。
+    if (
+      !isInitialProjectTurn
+      && event.type === 'tool_use'
+      && (event.data.name === 'ensure_project_scaffold' || event.data.name.endsWith('__ensure_project_scaffold'))
+    ) {
+      hiddenScaffoldToolUseIds.add(event.data.id);
+      return;
+    }
+    if (!isInitialProjectTurn && event.type === 'tool_result' && hiddenScaffoldToolUseIds.has(event.data.tool_use_id)) {
+      return;
+    }
     if (event.type === 'text_segment' && state.previewUrl) {
       send({
         ...event,

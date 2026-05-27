@@ -348,7 +348,7 @@ type FileCopy = UiCopy['files'];
 //   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
 //     ? crypto.randomUUID()
 //     : `debug-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const DEBUG_CONVERSATION_ID = 'pages-agent-conversation-id';
+const DEBUG_CONVERSATION_ID = 'pages-agent-conversation-id-shirly2';
 
 function createMessageId(role: ChatMessage['role']) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -383,8 +383,14 @@ export default function Home() {
   const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({});
   const [sandboxTab, setSandboxTab] = useState<'preview' | 'files'>('preview');
   const [fileTree, setFileTree] = useState<FileTree | null>(null);
-  const [previewFrameLoaded, setPreviewFrameLoaded] = useState(false);
-  const [previewRevision, setPreviewRevision] = useState(0);
+  const [activePreviewUrl, setActivePreviewUrl] = useState('');
+  const [activePreviewRevision, setActivePreviewRevision] = useState(0);
+  const [activePreviewLoaded, setActivePreviewLoaded] = useState(false);
+  const [pendingPreviewUrl, setPendingPreviewUrl] = useState('');
+  const [pendingPreviewRevision, setPendingPreviewRevision] = useState(0);
+  const activePreviewUrlRef = useRef('');
+  const activePreviewRevisionRef = useRef(0);
+  const previewRevisionRef = useRef(0);
 
   const t = TRANSLATIONS[language];
   const canSend = input.trim().length > 0 && !loading;
@@ -402,14 +408,44 @@ export default function Home() {
     window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
   }, [language]);
 
-  // 跨域 iframe 在某些环境下 onLoad 不会触发，3 秒后兜底关闭遮罩，避免一直空白。
-  useEffect(() => {
-    if (!preview?.url || previewFrameLoaded) {
+  const promotePendingPreview = () => {
+    if (!pendingPreviewUrl) {
       return;
     }
-    const timer = window.setTimeout(() => setPreviewFrameLoaded(true), 3000);
+    activePreviewUrlRef.current = pendingPreviewUrl;
+    activePreviewRevisionRef.current = pendingPreviewRevision;
+    setActivePreviewUrl(pendingPreviewUrl);
+    setActivePreviewRevision(pendingPreviewRevision);
+    setActivePreviewLoaded(true);
+    setPendingPreviewUrl('');
+    setPendingPreviewRevision(0);
+  };
+
+  // 跨域 iframe 在某些环境下 onLoad 不会触发，3 秒后兜底关闭遮罩，避免一直空白。
+  useEffect(() => {
+    if (!activePreviewUrl || activePreviewLoaded) {
+      return;
+    }
+    const timer = window.setTimeout(() => setActivePreviewLoaded(true), 3000);
     return () => window.clearTimeout(timer);
-  }, [preview?.url, previewFrameLoaded, previewRevision]);
+  }, [activePreviewUrl, activePreviewLoaded, activePreviewRevision]);
+
+  // 后台 iframe 也保留兜底提升，避免 onLoad 未触发时旧预览永远不切换。
+  useEffect(() => {
+    if (!pendingPreviewUrl) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      activePreviewUrlRef.current = pendingPreviewUrl;
+      activePreviewRevisionRef.current = pendingPreviewRevision;
+      setActivePreviewUrl(pendingPreviewUrl);
+      setActivePreviewRevision(pendingPreviewRevision);
+      setActivePreviewLoaded(true);
+      setPendingPreviewUrl('');
+      setPendingPreviewRevision(0);
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [pendingPreviewUrl, pendingPreviewRevision]);
 
   async function sendMessage(message: string) {
     const trimmed = message.trim();
@@ -436,7 +472,8 @@ export default function Home() {
     setFileTree(null);
     setInput('');
     setLoading(true);
-    const activatedPreviewUrls = new Set<string>();
+    const activatedPreviewRevisions = new Map<string, number>();
+    let sawProjectActivity = false;
 
     const patchAssistant = (patch: Partial<ChatMessage>) => {
       setMessages((current) =>
@@ -493,12 +530,34 @@ export default function Home() {
     const activatePreview = (nextPreview: LinkInfo) => {
       setPreview(nextPreview);
       if (nextPreview.url) {
-        setPreviewFrameLoaded(false);
         setSandboxTab('preview');
-        if (!activatedPreviewUrls.has(nextPreview.url)) {
-          activatedPreviewUrls.add(nextPreview.url);
-          setPreviewRevision((current) => current + 1);
+        let revision = activatedPreviewRevisions.get(nextPreview.url);
+        if (revision === undefined) {
+          revision = previewRevisionRef.current + 1;
+          previewRevisionRef.current = revision;
+          activatedPreviewRevisions.set(nextPreview.url, revision);
         }
+
+        if (!activePreviewUrlRef.current) {
+          activePreviewUrlRef.current = nextPreview.url;
+          activePreviewRevisionRef.current = revision;
+          setActivePreviewUrl(nextPreview.url);
+          setActivePreviewRevision(revision);
+          setActivePreviewLoaded(false);
+          setPendingPreviewUrl('');
+          setPendingPreviewRevision(0);
+          return;
+        }
+
+        if (
+          activePreviewUrlRef.current === nextPreview.url
+          && activePreviewRevisionRef.current === revision
+        ) {
+          return;
+        }
+
+        setPendingPreviewUrl(nextPreview.url);
+        setPendingPreviewRevision(revision);
       }
     };
 
@@ -553,7 +612,12 @@ export default function Home() {
         const agentData = event.data;
         const text = agentData.reply || agentData.error || t.response.noDisplay;
         // agent 事件先到，但 result 还会带最终聚合（含 build、preview）。
-        // 这里只提前把 reply 写进 content，状态仍保持 running，等 result 再 finalize。
+        // 普通问答不会触发项目工具，此时 agent 事件已经是完整回答，可以直接结束前端等待态。
+        // 有项目工具活动时，状态仍保持 running，等 result 再 finalize。
+        if (!sawProjectActivity) {
+          finalizeAssistant(text, agentData.ok === false ? 'error' : 'done');
+          return;
+        }
         patchAssistant({ content: text });
         return;
       }
@@ -562,6 +626,7 @@ export default function Home() {
         return;
       }
       if (event.type === 'tool_use' && event.data) {
+        sawProjectActivity = true;
         appendStep({
           kind: 'tool_use',
           id: event.data.id || '',
@@ -571,6 +636,7 @@ export default function Home() {
         return;
       }
       if (event.type === 'tool_result' && event.data) {
+        sawProjectActivity = true;
         appendStep({
           kind: 'tool_result',
           toolUseId: event.data.tool_use_id || '',
@@ -580,10 +646,12 @@ export default function Home() {
         return;
       }
       if (event.type === 'file_tree' && event.data) {
+        sawProjectActivity = true;
         setFileTree(event.data);
         return;
       }
       if (event.type === 'preview_ready' && event.data) {
+        sawProjectActivity = true;
         if (event.data.preview) {
           activatePreview(event.data.preview);
           appendStep({
@@ -602,6 +670,7 @@ export default function Home() {
         return;
       }
       if (event.type === 'log' && event.message) {
+        sawProjectActivity = true;
         appendStep({
           kind: 'log',
           stream: (event.stream as 'stdout' | 'stderr' | 'status') || 'stdout',
@@ -773,6 +842,7 @@ export default function Home() {
                 const status: AssistantStatus = message.status || 'done';
                 const steps = message.steps ?? [];
                 const isOpen = openSteps[message.id] ?? status === 'running';
+                const hasDisplayableTimelineSteps = normalizeTimelineSteps(steps, t.timeline).length > 0;
 
                 return (
                   <div
@@ -780,7 +850,18 @@ export default function Home() {
                     className="mr-8 min-w-0 overflow-hidden break-words rounded-2xl bg-white/[0.07] px-4 py-3 text-sm leading-6 text-[#ececf0]"
                   >
                     {status === 'running' ? (
-                      <AssistantTimeline steps={steps} running copy={t.timeline} />
+                      <>
+                        {message.content ? (
+                          <MarkdownMessage content={message.content} />
+                        ) : (
+                          <AssistantTimeline steps={steps} running copy={t.timeline} />
+                        )}
+                        {message.content && hasDisplayableTimelineSteps && (
+                          <div className="mt-3 border-t border-white/10 pt-2">
+                            <AssistantTimeline steps={steps} running copy={t.timeline} />
+                          </div>
+                        )}
+                      </>
                     ) : (
                       <>
                         {message.content && <MarkdownMessage content={message.content} />}
@@ -885,18 +966,29 @@ export default function Home() {
                 preview?.url ? (
                   <div className="flex h-full min-h-0 flex-col bg-white">
                     <div className="relative min-h-0 flex-1 bg-white">
-                      {!previewFrameLoaded && (
+                      {!activePreviewLoaded && (
                         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-[#101412]/85 px-6 text-center text-[#b5c4be]">
                           {t.workspace.loadingPreview}
                         </div>
                       )}
-                      <iframe
-                        key={`${preview.url}:${previewRevision}`}
-                        title="sandbox-preview"
-                        src={withPreviewRevision(preview.url, previewRevision)}
-                        onLoad={() => setPreviewFrameLoaded(true)}
-                        className="h-full w-full border-0"
-                      />
+                      {activePreviewUrl && (
+                        <iframe
+                          key={`${activePreviewUrl}:${activePreviewRevision}`}
+                          title="sandbox-preview"
+                          src={withPreviewRevision(activePreviewUrl, activePreviewRevision)}
+                          onLoad={() => setActivePreviewLoaded(true)}
+                          className="h-full w-full border-0"
+                        />
+                      )}
+                      {pendingPreviewUrl && (
+                        <iframe
+                          key={`pending:${pendingPreviewUrl}:${pendingPreviewRevision}`}
+                          title="sandbox-preview-pending"
+                          src={withPreviewRevision(pendingPreviewUrl, pendingPreviewRevision)}
+                          onLoad={promotePendingPreview}
+                          className="invisible pointer-events-none absolute inset-0 h-full w-full border-0"
+                        />
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -1005,9 +1097,6 @@ function normalizeTimelineSteps(steps: TimelineStep[], copy: TimelineCopy): Norm
     summary: string,
   ) => {
     const step = ensureStep(phase);
-    if (step.status === 'error' && status !== 'error') {
-      return;
-    }
     if (step.status === 'done' && status === 'running') {
       return;
     }
@@ -1225,7 +1314,7 @@ function classifyStatusText(text: string, copy: TimelineCopy): {
   status: NormalizedStepStatus;
   summary: string;
 } | null {
-  if (/准备项目工作区|执行 Agent 流程|prepare the project workspace|agent flow/i.test(text)) {
+  if (/准备项目工作区|prepare the project workspace/i.test(text)) {
     return { phase: 'scaffold', status: 'running', summary: copy.summaries.scaffoldRunning };
   }
   if (/检测到已有工作区|existing project workspace/i.test(text)) {

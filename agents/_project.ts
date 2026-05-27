@@ -5,10 +5,10 @@ import {
   PREVIEW_BINARY_EXTENSIONS,
   PREVIEW_MAX_BYTES,
   SANDBOX_DEBUG_PORT,
-} from './constants';
-import type { BuildResult, BuildStatus, FileTreeItem, ProjectState, ScaffoldLog } from './types';
-import { readFileExtension, safeSegment } from './utils/paths';
-import { detectFatalToolError } from './utils/text';
+} from './_constants';
+import type { BuildResult, BuildStatus, FileTreeItem, ProjectState, ScaffoldLog } from './_types';
+import { readFileExtension, safeSegment } from './utils/_paths';
+import { detectFatalToolError } from './utils/_text';
 
 export function createProjectState(conversationId: string): ProjectState {
   const sessionDir = `projects/${safeSegment(conversationId)}`;
@@ -245,6 +245,85 @@ function appendAccessToken(url: string, token: string) {
   }
 }
 
+function resolvePreviewAllowedHost(context: any) {
+  try {
+    const previewHost = context.sandbox.getHost(PREVIEW_SERVER_PORT);
+    const previewUrl = normalizePublicUrl(previewHost);
+    if (!previewUrl) {
+      return '';
+    }
+    return new URL(previewUrl).hostname;
+  } catch {
+    return '';
+  }
+}
+
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function buildViteAllowedHostEnvPrefix(context: any) {
+  const allowedHost = resolvePreviewAllowedHost(context);
+  return allowedHost
+    ? `env __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=${shellQuote(allowedHost)} `
+    : '';
+}
+
+async function findViteConfigFilename(context: any, state: ProjectState) {
+  const candidates = [
+    'vite.config.ts',
+    'vite.config.mts',
+    'vite.config.cts',
+    'vite.config.js',
+    'vite.config.mjs',
+    'vite.config.cjs',
+  ];
+  for (const filename of candidates) {
+    if (await context.sandbox.files.exists(`${state.appDir}/${filename}`)) {
+      return filename;
+    }
+  }
+  return '';
+}
+
+async function prepareVitePreviewConfig(context: any, state: ProjectState) {
+  const userConfigFilename = await findViteConfigFilename(context, state);
+  const userConfigSpecifier = userConfigFilename ? `../${userConfigFilename}` : '';
+  const previewConfigPath = `${state.appDir}/.vite/edgeone-preview.config.mjs`;
+  await context.sandbox.files.makeDir(`${state.appDir}/.vite`);
+  await context.sandbox.files.write(previewConfigPath, [
+    "import { defineConfig, loadConfigFromFile, mergeConfig } from 'vite';",
+    '',
+    "const mode = process.env.NODE_ENV || 'development';",
+    "const configEnv = { command: 'serve', mode, isSsrBuild: false, isPreview: false };",
+    `const userConfigSpecifier = ${JSON.stringify(userConfigSpecifier)};`,
+    'const loaded = userConfigSpecifier',
+    '  ? await loadConfigFromFile(configEnv, new URL(userConfigSpecifier, import.meta.url).pathname)',
+    '  : null;',
+    'const userConfig = loaded?.config || {};',
+    "const additionalHost = process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS || '';",
+    'const existingAllowedHosts = userConfig.server?.allowedHosts;',
+    'const allowedHosts = existingAllowedHosts === true',
+    '  ? true',
+    '  : Array.from(new Set([',
+    '    ...(Array.isArray(existingAllowedHosts) ? existingAllowedHosts : []),',
+    '    ...(additionalHost ? [additionalHost] : []),',
+    '  ]));',
+    'const edgeoneConfig = {',
+    "  root: userConfig.root || process.cwd(),",
+    '  server: {',
+    "    host: '0.0.0.0',",
+    `    port: Number(process.env.PORT || ${PREVIEW_SERVER_PORT}),`,
+    '    allowedHosts,',
+    '  },',
+    '};',
+    '',
+    'export default defineConfig(mergeConfig(userConfig, edgeoneConfig));',
+    '',
+  ].join('\n'));
+  return '.vite/edgeone-preview.config.mjs';
+}
+
 type PreviewStartCommand = {
   command: string;
   framework: string;
@@ -325,6 +404,7 @@ async function detectPreviewStartCommand(
     const scripts = metadata.scripts || {};
     const deps = metadata.deps || {};
     const scriptText = Object.values(scripts).join(' ');
+    const viteAllowedHostEnv = buildViteAllowedHostEnvPrefix(context);
 
     if (deps.next || /\bnext\b/.test(scriptText)) {
       return {
@@ -334,9 +414,10 @@ async function detectPreviewStartCommand(
     }
 
     if (deps.vite || /\bvite\b/.test(scriptText)) {
+      const vitePreviewConfig = await prepareVitePreviewConfig(context, state);
       return {
         framework: 'vite',
-        command: `nohup npm run dev -- --host 0.0.0.0 --port ${port} > /tmp/dev.log 2>&1 &`,
+        command: `nohup ${viteAllowedHostEnv}npm run dev -- --host 0.0.0.0 --port ${port} --config ${shellQuote(vitePreviewConfig)} > /tmp/dev.log 2>&1 &`,
       };
     }
 
@@ -348,7 +429,7 @@ async function detectPreviewStartCommand(
     ) {
       return {
         framework: 'frontend-dev-server',
-        command: `nohup npm run dev -- --host 0.0.0.0 --port ${port} > /tmp/dev.log 2>&1 &`,
+        command: `nohup ${viteAllowedHostEnv}npm run dev -- --host 0.0.0.0 --port ${port} > /tmp/dev.log 2>&1 &`,
       };
     }
 
