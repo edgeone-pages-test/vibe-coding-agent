@@ -177,6 +177,7 @@ const TRANSLATIONS = {
       downloadSource: '下载源码',
       loadingPreview: '正在加载实时预览...',
       previewEmpty: '首次构建完成后会在这里显示预览。',
+      constructionDisclaimer: '当前仅为模板演示流程使用，模型效果可能较差，简易部署后替换自有模型',
       previewError: '预览错误：',
       downloadError: '下载错误：',
       buildFailedMessage: '构建失败。源码包仍保留当前文件，便于调试。',
@@ -277,6 +278,7 @@ const TRANSLATIONS = {
       downloadSource: 'Download source',
       loadingPreview: 'Loading live preview...',
       previewEmpty: 'Preview will appear after the first build finishes.',
+      constructionDisclaimer: 'This is only a template demo flow. Model quality may be limited; replace it with your own model after simple deployment.',
       previewError: 'Preview error: ',
       downloadError: 'Download error: ',
       buildFailedMessage: 'Build failed. The source package still keeps the current files for debugging.',
@@ -944,8 +946,11 @@ export default function Home() {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex h-full min-h-0 items-center justify-center bg-[#101412] px-6 text-center text-[#b5c4be]">
-                    {t.workspace.previewEmpty}
+                  <div className="flex h-full min-h-0 flex-col items-center justify-center bg-[#101412] px-6 text-center text-[#b5c4be]">
+                    <p>{t.workspace.previewEmpty}</p>
+                    <p className="mt-3 max-w-xl text-xs leading-5 text-[#8fa098]">
+                      {t.workspace.constructionDisclaimer}
+                    </p>
                   </div>
                 )
               ) : (
