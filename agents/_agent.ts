@@ -9,13 +9,15 @@ import {
   DEFAULT_PATH,
   GATEWAY_QUOTA_BYPASS_HEADER,
   GATEWAY_QUOTA_PROMPT_HEADER,
+  PREVIEW_PATH_PREFIX,
+  PREVIEW_PUBLIC_PORT,
   PREVIEW_SERVER_PORT,
   SANDBOX_MCP_SERVER_NAME,
 } from './_constants';
 import {
   buildPreviewLinkTool,
   buildProjectScaffoldTool,
-  buildStartPreviewServerTool,
+  buildPublishPreviewTool,
   buildWriteProjectFilesTool,
 } from './tools/_project-tools';
 import type {
@@ -73,10 +75,7 @@ function inferToolProgress(name: string, input: unknown): {
   if (toolName === 'ensure_project_scaffold') {
     return { phaseHint: 'scaffold' };
   }
-  if (toolName === 'get_preview_link') {
-    return { phaseHint: 'link' };
-  }
-  if (toolName === 'start_preview_server') {
+  if (toolName === 'publish_preview' || toolName === 'get_preview_link') {
     return { phaseHint: 'preview' };
   }
   if (toolName === 'files_write' || toolName === 'files_make_dir' || toolName === 'files_remove') {
@@ -103,7 +102,7 @@ function inferToolProgress(name: string, input: unknown): {
   return {};
 }
 
-// Prompt 约束模型的核心约束：理解需求 → 生成/修改项目 → 启动预览服务 → 获取预览链接。
+// Prompt 约束模型的核心约束：理解需求 → 生成/修改项目 → 发布预览链接。
 export function buildPrompt(
   userMessage: string,
   history: ConversationMessage[],
@@ -132,8 +131,7 @@ export function buildPrompt(
       '1. 根据用户需求确定技术栈和文件列表。',
       '2. 调用 write_project_files 一次或少数几次批量写入完整可运行文件；参数必须是 {"files":[{"path":"相对路径","content":"完整文件内容"}]}。',
       '3. 根据生成的项目安装依赖；Node/前端项目默认使用 npm install，用户明确要求 pnpm/yarn 时可使用对应包管理器；Python 项目使用 python -m pip install -r requirements.txt。',
-      `4. 调用 start_preview_server 工具启动内部 ${PREVIEW_SERVER_PORT} 端口服务；公开预览由 get_preview_link 通过 sandbox.getHost(${PREVIEW_SERVER_PORT}) 加 envdAccessToken 生成，不要手写 npm run dev 后台命令。`,
-      `5. 使用 publish-preview skill 确认 HTTP 就绪并调用 get_preview_link；不要调用 browser 工具预热、fetch 或截图。`,
+      `4. 调用 publish_preview 工具；该工具会启动内部 ${PREVIEW_SERVER_PORT} 端口服务、确认 ${PREVIEW_PATH_PREFIX} HTTP 就绪，并通过 sandbox.getHost(${PREVIEW_PUBLIC_PORT}) + ${PREVIEW_PATH_PREFIX} + envdAccessToken 生成公开预览。不要手写 npm run dev 后台命令。`,
     ].join('\n'),
     '不要只写占位页面；生成的文件必须完整、内部一致、可直接安装和运行。',
     '优先用 write_project_files 创建或替换多个项目文件；路径必须是相对项目目录的路径，files 必须优先传数组，不要传字符串。',
@@ -144,14 +142,19 @@ export function buildPrompt(
     '命令失败时必须先阅读错误并定位具体问题；只修复具体文件、依赖或配置，不要整体重生成项目，不要重复执行同一个失败修复。',
     '优先做最小且完整的修改，保持现有项目结构和风格；不要做与用户需求无关的重构。',
     'Next.js 项目必须使用 App Router 常规结构；配置文件使用 next.config.js 或 next.config.mjs，不要生成 next.config.ts。',
-    'Vite 项目不要在 vite.config 中硬编码临时沙箱预览域名；如果需要配置 server.allowedHosts，只能从 process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS 读取并填入显式列表，不要设置 allowedHosts: true。',
+    "Next.js 项目必须在 next.config.js 或 next.config.mjs 中支持 basePath: process.env.EDGEONE_PREVIEW_BASE_PATH || ''，不要把 /preview 写死到业务路由里。",
+    `Vite 项目必须适配沙箱 ${PREVIEW_PATH_PREFIX} 预览：base 使用 ${PREVIEW_PATH_PREFIX}；server.host='0.0.0.0'；server.port=${PREVIEW_SERVER_PORT}；server.strictPort=true；server.allowedHosts=true；server.hmr={ protocol:'wss', clientPort:443 }；legacy.skipWebSocketTokenCheck=true；不要设置 server.hmr.path。`,
+    'Vite React 项目必须安装 @vitejs/plugin-react 并配置 plugins: [react()]，以保留 React Fast Refresh。',
+    'Vite 项目不要在 vite.config 中硬编码临时沙箱预览域名。',
     '如果生成 TypeScript 项目，确保导入、类型和路由用法能通过构建或验证。',
     '不要在回复里粘贴大段代码；最终回复默认使用用户当前 prompt 的主要语言，中英混合时跟随主要语言；技术名词、错误日志、非预览链接原文保留。',
+    '最终回复必须是贴合当前用户需求的具体结论，说明完成了什么以及预览/验证结果；例如用户要求“做一个带统计和主题切换的番茄钟”，应回复类似“已完成带统计和主题切换的番茄钟，预览已就绪，可在右侧查看。”，不要只说“已编写完成，请查看结果”。',
     '不要声明未验证成功的结果；如果失败，简洁说明失败点和下一步。',
-    `完成代码修改和依赖安装后，必须调用 start_preview_server 工具启动内部 ${PREVIEW_SERVER_PORT} 端口服务，然后使用 publish-preview skill 调用 get_preview_link 发布 getHost(${PREVIEW_SERVER_PORT}) 预览供用户查看。`,
-    '不要自行拼 preview URL 或 sandboxDebugUrl，只能使用 get_preview_link 返回的字段。',
+    `完成代码修改和依赖安装后，必须调用 publish_preview 工具发布 getHost(${PREVIEW_PUBLIC_PORT})${PREVIEW_PATH_PREFIX} 预览供用户查看；publish_preview 会负责启动和校验内部 ${PREVIEW_SERVER_PORT} 预览服务。get_preview_link 仅作为兼容旧流程的别名，不要优先使用。`,
+    '不要自行拼 preview URL 或 sandboxDebugUrl，只能使用 publish_preview 或 get_preview_link 返回的字段。',
     '不要在最终回复中输出预览按钮、预览链接、preview URL 或 sandboxDebugUrl；预览只通过右侧预览面板展示。',
     '不要截图。',
+    '返回内容不要包含 emoji',
     isNewProject ? '当前可能还没有准备项目工作区。' : '当前会话之前已经准备过项目工作区。',
     recentHistory ? `最近对话：\n${recentHistory}` : '',
     `当前用户需求：${userMessage}`,
@@ -236,6 +239,7 @@ export async function runCodingAgent(
     }
     const edgeoneMcp = context.tools.toClaudeMcpServer(mcpServerName, { alwaysLoad: true });
     let projectTouched = false;
+    let previewTouched = false;
     let wasCreated = false;
     const scaffoldTool = buildProjectScaffoldTool(
       context,
@@ -246,8 +250,20 @@ export async function runCodingAgent(
         wasCreated = created;
       },
     );
-    const previewLinkTool = buildPreviewLinkTool(context, state);
-    const startPreviewServerTool = buildStartPreviewServerTool(context, state);
+    const previewLinkTool = buildPreviewLinkTool(
+      context,
+      state,
+      () => {
+        previewTouched = true;
+      },
+    );
+    const publishPreviewTool = buildPublishPreviewTool(
+      context,
+      state,
+      () => {
+        previewTouched = true;
+      },
+    );
     const writeProjectFilesTool = buildWriteProjectFilesTool(
       context,
       state,
@@ -260,14 +276,14 @@ export async function runCodingAgent(
       ...edgeoneMcp.tools,
       scaffoldTool,
       writeProjectFilesTool,
-      startPreviewServerTool,
+      publishPreviewTool,
       previewLinkTool,
     ];
     const mcpAllowedTools = [
       ...edgeoneMcp.allowedTools,
       `mcp__${mcpServerName}__ensure_project_scaffold`,
       `mcp__${mcpServerName}__write_project_files`,
-      `mcp__${mcpServerName}__start_preview_server`,
+      `mcp__${mcpServerName}__publish_preview`,
       `mcp__${mcpServerName}__get_preview_link`,
     ];
 
@@ -282,7 +298,6 @@ export async function runCodingAgent(
       permissionMode: 'dontAsk',
       maxTurns: 18,
       // 禁用 Claude Code 内置本地工具，只允许模型通过 EdgeOne sandbox MCP 工具读写/执行。
-      // 注意：SDK 文档说设置 `skills` 后会自动启用 Skill 工具，不依赖 `tools` 字段。
       tools: [],
       mcpServers: {
         [mcpServerName]: sandboxMcpServer,
@@ -291,11 +306,9 @@ export async function runCodingAgent(
       strictMcpConfig: true,
       systemPrompt: buildPrompt(userMessage, history, state, isNewProject, mcpServerName),
       env: sdkEnv,
-      // Skills：从 cwd 向上扫描 .claude/skills/ 加载文件型 skill。
-      // start_preview_server 工具负责启动内部 3000；publish-preview 负责确认 HTTP 就绪并发布 getHost(3000) 预览链接。
+      // publish_preview 工具负责启动内部 3000、确认 /preview/ 就绪并发布 getHost(9000)/preview/ 预览链接。
       cwd: process.cwd(),
       settingSources: ['project'],
-      skills: ['publish-preview'],
     };
 
     if (executablePath) {
@@ -420,6 +433,7 @@ export async function runCodingAgent(
         output: null,
         error: fatalError,
         projectTouched,
+        previewTouched,
         wasCreated,
         fatal: true,
       };
@@ -431,6 +445,7 @@ export async function runCodingAgent(
         output: null,
         error: '模型流已结束，但没有返回结果。',
         projectTouched,
+        previewTouched,
         wasCreated,
       };
     }
@@ -451,6 +466,7 @@ export async function runCodingAgent(
           ? resultMessage.errors[0]
           : '模型执行失败。',
         projectTouched,
+        previewTouched,
         wasCreated,
       };
     }
@@ -460,6 +476,7 @@ export async function runCodingAgent(
       output: sanitizeAssistantText((resultMessage.result || '').trim()),
       error: null,
       projectTouched,
+      previewTouched,
       wasCreated,
     };
   } catch(e) {

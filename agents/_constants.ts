@@ -1,5 +1,7 @@
-// 应用 dev server 监听内部 3000；公开预览地址由 sandbox.getHost(3000) 生成。
+// 应用 dev server 监听内部 3000；公开预览统一经沙箱 nginx 9000 的 /preview/ 反代暴露。
 export const PREVIEW_SERVER_PORT = 3000;
+export const PREVIEW_PUBLIC_PORT = 9000;
+export const PREVIEW_PATH_PREFIX = '/preview/';
 export const HISTORY_FETCH_LIMIT = 50;
 export const AUTO_FIX_MAX_ATTEMPTS = 1;
 export const BUILD_ERROR_PROMPT_LIMIT = 12000;

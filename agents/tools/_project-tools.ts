@@ -161,64 +161,96 @@ function normalizeProjectFilesInput(files: unknown): ProjectFileInput[] {
 export function buildPreviewLinkTool(
   context: any,
   state: ProjectState,
+  onResult?: (result: { url?: string; sandboxDebugUrl?: string }) => void,
 ) {
   return defineClaudeTool(
     'get_preview_link',
-    'Return the public preview URL generated from sandbox.getHost(3000) plus envdAccessToken and an optional sandboxDebugUrl from sandbox.browser.liveUrl. Do not synthesize either field — only use this tool result.',
+    'Legacy alias for publish_preview. Start or refresh the project preview server on internal port 3000, wait until the /preview/ entry is ready, then return the public preview URL generated from sandbox.getHost(9000)/preview/ plus envdAccessToken and an optional sandboxDebugUrl from sandbox.browser.liveUrl. Do not call any other preview startup tool or synthesize either field.',
     {},
     async () => {
-      try {
-        await assertPreviewServerReady(context);
-        const links = await resolvePublicLinks(context);
-        state.previewUrl = links.previewUrl;
-        state.sandboxDebugUrl = links.sandboxDebugUrl;
-        const preview = {
-          url: state.previewUrl,
-          sandboxDebugUrl: state.sandboxDebugUrl,
-        };
-        return {
-          content: [{
-            type: 'text' as const,
-            text: stringifyToolResult(preview),
-          }],
-        };
-      } catch (error) {
-        state.previewUrl = undefined;
-        state.sandboxDebugUrl = undefined;
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          content: [{ type: 'text' as const, text: message }],
-          isError: true,
-        };
-      }
+      return publishPreview(context, state, onResult);
     },
   ) as ClaudeMcpTool;
 }
 
-export function buildStartPreviewServerTool(
+export function buildPublishPreviewTool(
   context: any,
   state: ProjectState,
+  onResult?: (result: { url?: string; sandboxDebugUrl?: string }) => void,
 ) {
   return defineClaudeTool(
-    'start_preview_server',
-    'Start the project server on internal port 3000, write logs to /tmp/dev.log, and wait until http://127.0.0.1:3000 is ready. The public URL is generated from sandbox.getHost(3000). Call this after dependencies are installed and before publish-preview.',
+    'publish_preview',
+    'Publish the project preview. Start or refresh the project preview server on internal port 3000, wait until the /preview/ entry is ready, then return the public preview URL generated from sandbox.getHost(9000)/preview/ plus envdAccessToken and an optional sandboxDebugUrl from sandbox.browser.liveUrl. Do not call any other preview startup tool or synthesize either field.',
     {},
     async () => {
-      try {
-        const result = await startPreviewServer(context, state);
-        return {
-          content: [{
-            type: 'text' as const,
-            text: stringifyToolResult(result),
-          }],
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          content: [{ type: 'text' as const, text: message }],
-          isError: true,
-        };
-      }
+      return publishPreview(context, state, onResult);
     },
   ) as ClaudeMcpTool;
+}
+
+async function publishPreview(
+  context: any,
+  state: ProjectState,
+  onResult?: (result: { url?: string; sandboxDebugUrl?: string }) => void,
+) {
+  try {
+    await assertPreviewableProject(context, state);
+    const server = await startPreviewServer(context, state);
+    await assertPreviewServerReady(context, server.readyPath);
+    const links = await resolvePublicLinks(context);
+    state.previewUrl = links.previewUrl;
+    state.sandboxDebugUrl = links.sandboxDebugUrl;
+    onResult?.({
+      url: state.previewUrl,
+      sandboxDebugUrl: state.sandboxDebugUrl,
+    });
+    const preview = {
+      url: state.previewUrl,
+      sandboxDebugUrl: state.sandboxDebugUrl,
+      server,
+    };
+    return {
+      content: [{
+        type: 'text' as const,
+        text: stringifyToolResult(preview),
+      }],
+    };
+  } catch (error) {
+    state.previewUrl = undefined;
+    state.sandboxDebugUrl = undefined;
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{ type: 'text' as const, text: message }],
+      isError: true,
+    };
+  }
+}
+
+async function assertPreviewableProject(context: any, state: ProjectState) {
+  if (!state.created) {
+    throw new Error('当前还没有可预览项目，请先描述你想构建的页面或功能。');
+  }
+
+  const appDirExists = await context.sandbox.files.exists(state.appDir);
+  if (!appDirExists) {
+    throw new Error(`项目工作区不存在：${state.appDir}`);
+  }
+
+  const existing = await context.sandbox.commands.run(
+    [
+      'find . -mindepth 1 -maxdepth 2',
+      "\\( -path './node_modules' -o -path './.next' -o -path './.git' -o -path './dist' -o -path './build' \\) -prune",
+      '-o -print -quit',
+    ].join(' '),
+    {
+      cwd: state.appDir,
+      timeout: 30,
+    },
+  );
+  if (existing.exitCode !== 0) {
+    throw new Error(existing.stderr || existing.stdout || '项目工作区检查失败。');
+  }
+  if (!existing.stdout.trim()) {
+    throw new Error('当前项目目录为空，请先描述你想构建的页面或功能。');
+  }
 }

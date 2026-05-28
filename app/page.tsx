@@ -354,16 +354,6 @@ function createMessageId(role: ChatMessage['role']) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function withPreviewRevision(url: string, revision: number) {
-  try {
-    const parsed = new URL(url);
-    parsed.searchParams.set('__preview_revision', String(revision));
-    return parsed.toString();
-  } catch {
-    return url;
-  }
-}
-
 function maskConversationIdForLog(value: string | null) {
   if (!value) return '<empty>';
   if (value.length <= 12) return `${value.slice(0, 2)}...${value.slice(-2)}`;
@@ -935,7 +925,7 @@ export default function Home() {
                         <iframe
                           key={`${activePreviewUrl}:${activePreviewRevision}`}
                           title="sandbox-preview"
-                          src={withPreviewRevision(activePreviewUrl, activePreviewRevision)}
+                          src={activePreviewUrl}
                           onLoad={() => setActivePreviewLoaded(true)}
                           className="h-full w-full border-0"
                         />
@@ -944,7 +934,7 @@ export default function Home() {
                         <iframe
                           key={`pending:${pendingPreviewUrl}:${pendingPreviewRevision}`}
                           title="sandbox-preview-pending"
-                          src={withPreviewRevision(pendingPreviewUrl, pendingPreviewRevision)}
+                          src={pendingPreviewUrl}
                           onLoad={promotePendingPreview}
                           className="invisible pointer-events-none absolute inset-0 h-full w-full border-0"
                         />
@@ -1210,11 +1200,7 @@ function classifyToolUse(step: Extract<TimelineStep, { kind: 'tool_use' }>, copy
     };
   }
 
-  if (toolName === 'get_preview_link') {
-    return { phase: 'link', runningSummary: copy.summaries.linkRunning };
-  }
-
-  if (toolName === 'start_preview_server') {
+  if (toolName === 'publish_preview' || toolName === 'get_preview_link') {
     return { phase: 'preview', runningSummary: copy.summaries.previewRunning };
   }
 

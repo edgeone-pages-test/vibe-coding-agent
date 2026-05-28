@@ -38,6 +38,50 @@ function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function buildRequirementConclusionFallback(
+  request: string,
+  status: 'pending' | 'ready' | 'generated',
+) {
+  const summary = summarizeUserRequest(request);
+  const isEnglish = !/[\u3400-\u9fff]/.test(request);
+
+  if (isEnglish) {
+    if (status === 'ready') {
+      return `Built this for your request: ${summary}. The preview is ready in the right preview panel.`;
+    }
+    if (status === 'generated') {
+      return `Generated the project for your request: ${summary}.`;
+    }
+    return `Handled your request: ${summary}. Verification and preview results are being prepared.`;
+  }
+
+  if (status === 'ready') {
+    return `已根据你的需求完成：${summary}。预览已就绪，请在右侧预览面板查看。`;
+  }
+  if (status === 'generated') {
+    return `已根据你的需求生成了项目：${summary}。`;
+  }
+  return `已根据你的需求处理：${summary}。正在整理验证和预览结果。`;
+}
+
+function summarizeUserRequest(request: string) {
+  const normalized = request.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return /[\u3400-\u9fff]/.test(request) ? '你的 Web 项目' : 'your web project';
+  }
+  const maxLength = 80;
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength).trimEnd()}...`
+    : normalized;
+}
+
+function isGenericCompletionReply(text: string) {
+  const normalized = text.replace(/\s+/g, '').replace(/[。.!！]+$/g, '');
+  return normalized === '已编写完成，请查看结果'
+    || normalized === '已完成，请查看结果'
+    || /^theagentdidnotreturnanythingdisplayable$/i.test(normalized);
+}
+
 export function createStreamResponse(run: (send: StreamSend) => Promise<void>) {
   const encoder = new TextEncoder();
   let closed = false;
@@ -369,11 +413,17 @@ export async function runChatPipeline(context: any, message: string, send: Strea
     forwardProgress,
     pushEarlyFileTree,
   );
-  const fallbackReply = modelResult.success ? '已编写完成，请查看结果。' : (modelResult.error || '处理过程中出现异常，请重试。');
+  const sanitizedModelOutput = modelResult.success && modelResult.output
+    ? sanitizeAssistantText(modelResult.output)
+    : '';
+  const modelOutput = sanitizedModelOutput && !isGenericCompletionReply(sanitizedModelOutput)
+    ? sanitizedModelOutput
+    : '';
+  const fallbackReply = modelResult.success
+    ? buildRequirementConclusionFallback(message, state.previewUrl ? 'ready' : 'pending')
+    : (modelResult.error || '处理过程中出现异常，请重试。');
   const assistantReply = stripReturnedPreviewLinks(sanitizeAssistantText(
-    modelResult.success && modelResult.output
-      ? modelResult.output
-      : fallbackReply
+    modelOutput || fallbackReply
   ) || fallbackReply, state.previewUrl);
 
   send({
@@ -401,6 +451,40 @@ export async function runChatPipeline(context: any, message: string, send: Strea
           stderr: modelResult.error || assistantReply,
         },
         preview: {},
+      },
+    });
+    return;
+  }
+
+  if (!modelResult.projectTouched && modelResult.previewTouched) {
+    if (state.previewUrl) {
+      send({
+        type: 'preview_ready',
+        data: {
+          preview: {
+            url: state.previewUrl,
+            sandboxDebugUrl: state.sandboxDebugUrl,
+          },
+        },
+      });
+    }
+
+    await appendTurn(context, conversationId, 'user', message);
+    await appendTurn(context, conversationId, 'assistant', assistantReply);
+    await saveProjectState(context, conversationId, state);
+
+    send({
+      type: 'result',
+      data: {
+        ok: modelResult.success && Boolean(state.previewUrl),
+        reply: assistantReply,
+        conversation_id: conversationId,
+        build: { status: 'skipped' as BuildStatus },
+        preview: {
+          url: state.previewUrl,
+          sandboxDebugUrl: state.sandboxDebugUrl,
+          ...(!state.previewUrl ? { error: 'Agent 没有完成 publish_preview。' } : {}),
+        },
       },
     });
     return;
@@ -537,8 +621,8 @@ export async function runChatPipeline(context: any, message: string, send: Strea
     ...(autoFixAttempts > 0 ? { autoFixAttempts, autoFixApplied } : {}),
   };
 
-  // dev server 启动与浏览器预热已交给 agent 模型完成；外层不再重复启动服务。
-  // 模型在 get_preview_link 中会写入 state.previewUrl / state.sandboxDebugUrl。
+  // 预览启动、HTTP 就绪检查和取链已合并到 publish_preview。
+  // 模型调用 publish_preview 或兼容别名 get_preview_link 后会写入 state.previewUrl / state.sandboxDebugUrl。
   if (state.previewUrl) {
     send({
       type: 'preview_ready',
@@ -561,8 +645,12 @@ export async function runChatPipeline(context: any, message: string, send: Strea
     : '';
   const missingPreviewSuffix = state.previewUrl
     ? ''
-    : ' 未获取到预览链接，请继续要求 Agent 调用 start_preview_server 并调用 get_preview_link。';
-  const baseReply = autoFixReply || assistantReply;
+    : ' 未获取到预览链接，请继续要求 Agent 调用 publish_preview。';
+  const finalFallbackReply = buildRequirementConclusionFallback(
+    message,
+    build.status !== 'failed' && state.previewUrl ? 'ready' : 'generated',
+  );
+  const baseReply = autoFixReply || (modelOutput ? assistantReply : finalFallbackReply);
   const reply = stripReturnedPreviewLinks(
     `${baseReply}${autoFixSuffix}${buildFailedSuffix}${missingPreviewSuffix}`,
     state.previewUrl,
@@ -591,7 +679,7 @@ export async function runChatPipeline(context: any, message: string, send: Strea
       preview: {
         url: state.previewUrl,
         sandboxDebugUrl: state.sandboxDebugUrl,
-        ...(!state.previewUrl ? { error: 'Agent 没有完成 start_preview_server 或 get_preview_link。' } : {}),
+        ...(!state.previewUrl ? { error: 'Agent 没有完成 publish_preview。' } : {}),
       },
     },
   });

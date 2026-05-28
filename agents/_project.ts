@@ -1,6 +1,8 @@
 import {
   FILE_TREE_IGNORED_DIRECTORIES,
   FILE_TREE_IGNORED_FILENAMES,
+  PREVIEW_PATH_PREFIX,
+  PREVIEW_PUBLIC_PORT,
   PREVIEW_SERVER_PORT,
   PREVIEW_BINARY_EXTENSIONS,
   PREVIEW_MAX_BYTES,
@@ -186,19 +188,21 @@ export async function getFileTree(context: any, state: ProjectState): Promise<Fi
 }
 
 export async function resolvePublicLinks(context: any) {
-  const previewHost = context.sandbox.getHost(PREVIEW_SERVER_PORT);
+  const previewHost = context.sandbox.getHost(PREVIEW_PUBLIC_PORT);
   const accessToken = context.sandbox.envdAccessToken;
   const previewBaseUrl = normalizePublicUrl(previewHost);
   const sandboxDebugUrl = normalizePublicUrl(context.sandbox.browser?.liveUrl);
   console.log('检查预览链接生成条件', {
-    port: PREVIEW_SERVER_PORT,
+    internalPort: PREVIEW_SERVER_PORT,
+    publicPort: PREVIEW_PUBLIC_PORT,
+    proxyPath: PREVIEW_PATH_PREFIX,
     hasPreviewHost: Boolean(previewBaseUrl),
     hasEnvdAccessToken: Boolean(accessToken),
     hasSandboxDebugUrl: Boolean(sandboxDebugUrl),
   });
 
   const previewUrl = (previewBaseUrl && accessToken)
-    ? appendAccessToken(previewBaseUrl, accessToken)
+    ? buildPublicPreviewUrl(previewBaseUrl, accessToken)
     : undefined;
 
   return {
@@ -220,6 +224,19 @@ function normalizePublicUrl(value: unknown) {
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
+function buildPublicPreviewUrl(baseUrl: string, token: string) {
+  try {
+    const parsed = new URL(baseUrl);
+    parsed.pathname = PREVIEW_PATH_PREFIX;
+    parsed.search = '';
+    parsed.hash = '';
+    return appendAccessToken(parsed.toString(), token);
+  } catch {
+    const trimmedBase = baseUrl.replace(/\/+$/, '');
+    return appendAccessToken(`${trimmedBase}${PREVIEW_PATH_PREFIX}`, token);
+  }
+}
+
 function appendAccessToken(url: string, token: string) {
   try {
     const parsed = new URL(url);
@@ -235,7 +252,7 @@ function appendAccessToken(url: string, token: string) {
 
 function resolvePreviewAllowedHost(context: any) {
   try {
-    const previewHost = context.sandbox.getHost(PREVIEW_SERVER_PORT);
+    const previewHost = context.sandbox.getHost(PREVIEW_PUBLIC_PORT);
     const previewUrl = normalizePublicUrl(previewHost);
     if (!previewUrl) {
       return '';
@@ -257,6 +274,14 @@ function buildViteAllowedHostEnvPrefix(context: any) {
     : '';
 }
 
+function buildFrontendPreviewEnvPrefix(context: any) {
+  const allowedHost = resolvePreviewAllowedHost(context);
+  return [
+    `EDGEONE_PREVIEW_BASE_PATH=${shellQuote(PREVIEW_PATH_PREFIX.replace(/\/$/, ''))}`,
+    allowedHost ? `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=${shellQuote(allowedHost)}` : '',
+  ].filter(Boolean).join(' ');
+}
+
 async function findViteConfigFilename(context: any, state: ProjectState) {
   const candidates = [
     'vite.config.ts',
@@ -274,7 +299,13 @@ async function findViteConfigFilename(context: any, state: ProjectState) {
   return '';
 }
 
-async function prepareVitePreviewConfig(context: any, state: ProjectState) {
+async function prepareVitePreviewConfig(context: any, state: ProjectState, deps: Record<string, string>) {
+  if ((deps.react || deps['react-dom']) && !deps['@vitejs/plugin-react']) {
+    throw new Error(
+      'Vite React preview requires @vitejs/plugin-react so React Fast Refresh works under /preview/. Add it to devDependencies and configure plugins: [react()].',
+    );
+  }
+
   const userConfigFilename = await findViteConfigFilename(context, state);
   const userConfigSpecifier = userConfigFilename ? `../${userConfigFilename}` : '';
   const previewConfigPath = `${state.appDir}/.vite/edgeone-preview.config.mjs`;
@@ -282,6 +313,7 @@ async function prepareVitePreviewConfig(context: any, state: ProjectState) {
   await context.sandbox.files.write(previewConfigPath, [
     "import { defineConfig, loadConfigFromFile, mergeConfig } from 'vite';",
     '',
+    "const reactDeps = ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'react/jsx-dev-runtime'];",
     "const mode = process.env.NODE_ENV || 'development';",
     "const configEnv = { command: 'serve', mode, isSsrBuild: false, isPreview: false };",
     `const userConfigSpecifier = ${JSON.stringify(userConfigSpecifier)};`,
@@ -289,32 +321,87 @@ async function prepareVitePreviewConfig(context: any, state: ProjectState) {
     '  ? await loadConfigFromFile(configEnv, new URL(userConfigSpecifier, import.meta.url).pathname)',
     '  : null;',
     'const userConfig = loaded?.config || {};',
-    "const additionalHost = process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS || '';",
-    'const existingAllowedHosts = userConfig.server?.allowedHosts;',
-    'const allowedHosts = existingAllowedHosts === true',
-    '  ? true',
-    '  : Array.from(new Set([',
-    '    ...(Array.isArray(existingAllowedHosts) ? existingAllowedHosts : []),',
-    '    ...(additionalHost ? [additionalHost] : []),',
-    '  ]));',
+    'const userServer = userConfig.server || {};',
+    'const userHmr = userServer.hmr && typeof userServer.hmr === \'object\' ? userServer.hmr : {};',
+    'const { path: _hmrPath, ...hmrWithoutPath } = userHmr;',
+    'const sanitizedUserConfig = {',
+    '  ...userConfig,',
+    '  server: {',
+    '    ...userServer,',
+    '    hmr: hmrWithoutPath,',
+    '  },',
+    '};',
+    'const existingOptimizeInclude = userConfig.optimizeDeps?.include;',
+    'const optimizeInclude = Array.from(new Set([',
+    '  ...(Array.isArray(existingOptimizeInclude) ? existingOptimizeInclude : []),',
+    '  ...reactDeps,',
+    ']));',
     'const edgeoneConfig = {',
+    `  base: ${JSON.stringify(PREVIEW_PATH_PREFIX)},`,
     "  root: userConfig.root || process.cwd(),",
+    '  optimizeDeps: {',
+    '    include: optimizeInclude,',
+    '  },',
+    '  legacy: {',
+    '    skipWebSocketTokenCheck: true,',
+    '  },',
     '  server: {',
     "    host: '0.0.0.0',",
     `    port: Number(process.env.PORT || ${PREVIEW_SERVER_PORT}),`,
-    '    allowedHosts,',
+    '    strictPort: true,',
+    '    allowedHosts: true,',
+    '    hmr: {',
+    '      ...hmrWithoutPath,',
+    "      protocol: 'wss',",
+    '      clientPort: 443,',
+    '    },',
     '  },',
     '};',
     '',
-    'export default defineConfig(mergeConfig(userConfig, edgeoneConfig));',
+    'export default defineConfig(mergeConfig(sanitizedUserConfig, edgeoneConfig));',
     '',
   ].join('\n'));
   return '.vite/edgeone-preview.config.mjs';
 }
 
+async function assertNextPreviewConfig(context: any, state: ProjectState) {
+  const candidates = [
+    'next.config.js',
+    'next.config.mjs',
+    'next.config.cjs',
+    'next.config.mts',
+  ];
+  for (const filename of candidates) {
+    if (!(await context.sandbox.files.exists(`${state.appDir}/${filename}`))) {
+      continue;
+    }
+    const result = await context.sandbox.commands.run(
+      `node -e ${shellQuote(`const fs=require('fs'); const s=fs.readFileSync(${JSON.stringify(filename)}, 'utf8'); process.exit(/basePath\\s*:/.test(s) && /EDGEONE_PREVIEW_BASE_PATH/.test(s) ? 0 : 2);`)}`,
+      {
+        cwd: state.appDir,
+        timeout: 10,
+      },
+    );
+    if (result.exitCode === 0) {
+      return;
+    }
+    if (result.exitCode !== 2) {
+      throw new Error(result.stderr || result.stdout || `Failed to inspect ${filename}.`);
+    }
+    throw new Error(
+      `${filename} must support sandbox preview with basePath: process.env.EDGEONE_PREVIEW_BASE_PATH || ''.`,
+    );
+  }
+
+  throw new Error(
+    "Next.js preview requires next.config.js or next.config.mjs with basePath: process.env.EDGEONE_PREVIEW_BASE_PATH || ''.",
+  );
+}
+
 type PreviewStartCommand = {
   command: string;
   framework: string;
+  readyPath: string;
 };
 
 export async function startPreviewServer(context: any, state: ProjectState) {
@@ -350,8 +437,8 @@ export async function startPreviewServer(context: any, state: ProjectState) {
 
   const ready = await context.sandbox.commands.run(
     [
-      `for i in $(seq 1 30); do curl -fsS http://127.0.0.1:${port} >/dev/null && exit 0; sleep 1; done;`,
-      `echo "Preview server did not become ready on port ${port}" >&2;`,
+      `for i in $(seq 1 30); do curl -fsS ${shellQuote(`http://127.0.0.1:${port}${start.readyPath}`)} >/dev/null && exit 0; sleep 1; done;`,
+      `echo "Preview server did not become ready on port ${port}${start.readyPath}" >&2;`,
       'tail -n 120 /tmp/dev.log >&2 || true;',
       'exit 1',
     ].join(' '),
@@ -364,20 +451,23 @@ export async function startPreviewServer(context: any, state: ProjectState) {
 
   return {
     port,
+    publicPort: PREVIEW_PUBLIC_PORT,
+    proxyPath: PREVIEW_PATH_PREFIX,
     framework: start.framework,
     command: start.command,
+    readyPath: start.readyPath,
     ready: true,
   };
 }
 
-export async function assertPreviewServerReady(context: any) {
+export async function assertPreviewServerReady(context: any, readyPath = PREVIEW_PATH_PREFIX) {
   const result = await context.sandbox.commands.run(
-    `curl -fsS http://127.0.0.1:${PREVIEW_SERVER_PORT} >/dev/null`,
+    `curl -fsS ${shellQuote(`http://127.0.0.1:${PREVIEW_SERVER_PORT}${readyPath}`)} >/dev/null`,
     { timeout: 10 },
   );
 
   if (result.exitCode !== 0) {
-    throw new Error(`Preview server is not ready on port ${PREVIEW_SERVER_PORT}. Start the dev server and wait for HTTP readiness before calling get_preview_link.`);
+    throw new Error(`Preview server is not ready on port ${PREVIEW_SERVER_PORT}${readyPath}.`);
   }
 }
 
@@ -392,20 +482,24 @@ async function detectPreviewStartCommand(
     const scripts = metadata.scripts || {};
     const deps = metadata.deps || {};
     const scriptText = Object.values(scripts).join(' ');
+    const frontendPreviewEnv = buildFrontendPreviewEnvPrefix(context);
     const viteAllowedHostEnv = buildViteAllowedHostEnvPrefix(context);
 
     if (deps.next || /\bnext\b/.test(scriptText)) {
+      await assertNextPreviewConfig(context, state);
       return {
         framework: 'next',
-        command: `nohup npm run dev -- --hostname 0.0.0.0 --port ${port} > /tmp/dev.log 2>&1 &`,
+        command: `nohup env ${frontendPreviewEnv} npm run dev -- --hostname 0.0.0.0 --port ${port} > /tmp/dev.log 2>&1 &`,
+        readyPath: PREVIEW_PATH_PREFIX,
       };
     }
 
     if (deps.vite || /\bvite\b/.test(scriptText)) {
-      const vitePreviewConfig = await prepareVitePreviewConfig(context, state);
+      const vitePreviewConfig = await prepareVitePreviewConfig(context, state, deps);
       return {
         framework: 'vite',
-        command: `nohup ${viteAllowedHostEnv}npm run dev -- --host 0.0.0.0 --port ${port} --config ${shellQuote(vitePreviewConfig)} > /tmp/dev.log 2>&1 &`,
+        command: `nohup npm run dev -- --host 0.0.0.0 --port ${port} --config ${shellQuote(vitePreviewConfig)} > /tmp/dev.log 2>&1 &`,
+        readyPath: PREVIEW_PATH_PREFIX,
       };
     }
 
@@ -418,6 +512,7 @@ async function detectPreviewStartCommand(
       return {
         framework: 'frontend-dev-server',
         command: `nohup ${viteAllowedHostEnv}npm run dev -- --host 0.0.0.0 --port ${port} > /tmp/dev.log 2>&1 &`,
+        readyPath: PREVIEW_PATH_PREFIX,
       };
     }
 
@@ -425,6 +520,7 @@ async function detectPreviewStartCommand(
       return {
         framework: 'node-dev-server',
         command: `nohup env HOST=0.0.0.0 HOSTNAME=0.0.0.0 PORT=${port} npm run dev -- --host 0.0.0.0 --port ${port} > /tmp/dev.log 2>&1 &`,
+        readyPath: PREVIEW_PATH_PREFIX,
       };
     }
 
@@ -432,6 +528,7 @@ async function detectPreviewStartCommand(
       return {
         framework: 'node-start-server',
         command: `nohup env HOST=0.0.0.0 HOSTNAME=0.0.0.0 PORT=${port} npm start > /tmp/dev.log 2>&1 &`,
+        readyPath: PREVIEW_PATH_PREFIX,
       };
     }
   }
@@ -443,7 +540,8 @@ async function detectPreviewStartCommand(
 
   return {
     framework: 'static-http',
-    command: `nohup python3 -m http.server ${port} --bind 0.0.0.0 > /tmp/dev.log 2>&1 &`,
+    command: `ln -sfn . preview; nohup python3 -m http.server ${port} --bind 0.0.0.0 > /tmp/dev.log 2>&1 &`,
+    readyPath: PREVIEW_PATH_PREFIX,
   };
 }
 
@@ -507,24 +605,28 @@ async function detectPythonPreviewCommand(
     return {
       framework: 'fastapi',
       command: `nohup python3 -m uvicorn main:app --host 0.0.0.0 --port ${port} > /tmp/dev.log 2>&1 &`,
+      readyPath: PREVIEW_PATH_PREFIX,
     };
   }
   if (marker === 'fastapi:app') {
     return {
       framework: 'fastapi',
       command: `nohup python3 -m uvicorn app:app --host 0.0.0.0 --port ${port} > /tmp/dev.log 2>&1 &`,
+      readyPath: PREVIEW_PATH_PREFIX,
     };
   }
   if (marker === 'flask:app') {
     return {
       framework: 'flask',
       command: `nohup python3 -m flask --app app run --host 0.0.0.0 --port ${port} > /tmp/dev.log 2>&1 &`,
+      readyPath: PREVIEW_PATH_PREFIX,
     };
   }
   if (marker === 'flask:main') {
     return {
       framework: 'flask',
       command: `nohup python3 -m flask --app main run --host 0.0.0.0 --port ${port} > /tmp/dev.log 2>&1 &`,
+      readyPath: PREVIEW_PATH_PREFIX,
     };
   }
   return null;

@@ -27,6 +27,7 @@ export type CodingAgentResult = {
   output: string | null;
   error: string | null;
   projectTouched: boolean;
+  previewTouched?: boolean;
   wasCreated: boolean;
   fatal?: boolean;
 };

@@ -74,7 +74,9 @@ export function buildAutoFixPrompt(
     '- Read the error message carefully and identify the specific issue.',
     '- Make the smallest complete fix needed for verification to pass.',
     '- Do not regenerate all files or rewrite unrelated code.',
-    '- After fixing, call start_preview_server and then publish the preview using publish-preview.',
+    '- After fixing, call publish_preview to publish the preview.',
+    '- Final response must be a concrete conclusion tailored to the original user request, covering what was completed and the preview/verification result. Do not use a generic completion line.',
+    '- Do not include preview URLs, sandboxDebugUrl, or preview buttons in the final response.',
   ]
     .filter((part) => part !== '')
     .join('\n');
