@@ -635,7 +635,7 @@ export default function Home() {
         headers: {
           'content-type': 'application/json',
           conversationId: DEBUG_CONVERSATION_ID,
-          'pages-agent-conversation-id': conversationId || DEBUG_CONVERSATION_ID,
+          'makers-conversation-id': conversationId || DEBUG_CONVERSATION_ID,
         },
         body: JSON.stringify({ message: trimmed }),
       });
@@ -704,7 +704,7 @@ export default function Home() {
         type="button"
         onClick={() => setLanguage((current) => (current === 'zh' ? 'en' : 'zh'))}
         aria-label={t.languageToggleAria}
-        className="fixed right-4 top-4 z-50 rounded-full border border-white/15 bg-[#141917]/90 px-4 py-2 text-sm font-semibold text-[#dff8ef] shadow-lg shadow-black/25 backdrop-blur transition hover:border-[#7bd8b4] hover:text-white"
+        className="fixed right-4 top-4 z-50 rounded-full border border-white/15 bg-[#141917]/90 px-3 py-1.5 text-xs font-semibold text-[#dff8ef] shadow-lg shadow-black/25 backdrop-blur transition hover:border-[#7bd8b4] hover:text-white"
       >
         {t.languageToggleLabel}
       </button>
@@ -715,20 +715,20 @@ export default function Home() {
           <div className="aurora-band aurora-band-slim" />
 
           <div className="relative z-10 w-full max-w-7xl">
-            <h1 className="mx-auto max-w-6xl text-balance text-[clamp(3rem,7vw,6.25rem)] font-extrabold leading-[1.05]">
+            <h1 className="mx-auto max-w-5xl text-balance text-[clamp(2.5rem,5.8vw,5.25rem)] font-extrabold leading-[1.08]">
               {t.home.titleBefore}
               {language === 'en' ? ' ' : ''}
               <span className="build-word">{t.home.titleAccent}</span>
               {language === 'en' ? ' ' : ''}
               {t.home.titleAfter}
             </h1>
-            <p className="mt-6 text-[clamp(1.15rem,1.8vw,2.05rem)] font-semibold text-[#b5c4be]">
+            <p className="mt-8 text-[clamp(1.05rem,1.55vw,1.75rem)] font-semibold text-[#b5c4be]">
               {t.home.subtitle}
             </p>
 
             <form
               onSubmit={handleSubmit}
-              className="prompt-shell mx-auto mt-16 flex w-full max-w-[1260px] flex-col text-left"
+              className="prompt-shell mx-auto mt-20 flex w-full max-w-[1260px] flex-col text-left"
             >
               <textarea
                 value={input}
@@ -740,15 +740,17 @@ export default function Home() {
                 <button
                   type="submit"
                   disabled={!canSend}
-                  className="inline-flex min-h-14 w-full items-center justify-center gap-3 rounded-2xl bg-[#45b98e] px-7 py-4 text-lg font-semibold text-white shadow-lg shadow-[#45b98e]/20 transition hover:bg-[#56c99f] disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/45 disabled:shadow-none sm:w-auto sm:min-w-[190px] sm:text-xl"
+                  className="group inline-flex min-h-14 w-full cursor-pointer items-center justify-center gap-3 rounded-2xl bg-[#45b98e] px-7 py-4 text-lg font-semibold text-white shadow-lg shadow-[#45b98e]/20 transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#56c99f] hover:shadow-xl hover:shadow-[#45b98e]/35 active:translate-y-0 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/45 disabled:shadow-none disabled:hover:translate-y-0 sm:w-auto sm:min-w-[190px] sm:text-xl"
                 >
                   {loading ? t.home.building : t.home.buildNow}
-                  <ArrowIcon />
+                  <span className="transition-transform duration-200 group-hover:translate-x-1">
+                    <ArrowIcon />
+                  </span>
                 </button>
               </div>
             </form>
 
-            <div className="mx-auto mt-5 flex w-full max-w-[1260px] flex-wrap justify-center gap-3">
+            <div className="mx-auto mt-8 flex w-full max-w-[1260px] flex-wrap justify-center gap-3">
               {t.home.examples.map((example) => (
                 <button
                   key={example}

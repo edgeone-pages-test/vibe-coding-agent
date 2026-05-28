@@ -27,6 +27,7 @@ export async function ensureProjectScaffold(
 ) {
   const sandbox = context.sandbox;
   onLog?.({ stream: 'status', content: `准备项目工作区 ${state.appDir}` });
+  
   await sandbox.files.makeDir(state.sessionDir);
   await sandbox.files.makeDir(state.appDir);
 
@@ -44,6 +45,8 @@ export async function ensureProjectScaffold(
   if (existing.exitCode !== 0) {
     throw new Error(existing.stderr || existing.stdout || '工作区检查失败');
   }
+  const sandboxInfo = context.sandbox.getInfo();
+  console.log('沙箱信息', sandboxInfo);
 
   // 一个 conversation_id 对应一个长期复用的项目；已有业务文件时只复用，不覆盖。
   if (existing.stdout.trim()) {
@@ -52,11 +55,7 @@ export async function ensureProjectScaffold(
   }
 
   onLog?.({ stream: 'status', content: '已准备空项目工作区，等待 Agent 生成项目文件。' });
-  const sandboxInfo = context.sandbox.getInfo();
-  console.log('沙箱信息', {
-    hasInstanceId: Boolean(sandboxInfo?.instanceId),
-    expiresAt: sandboxInfo?.expiresAt,
-  });
+  
   return true;
 }
 
