@@ -240,13 +240,13 @@ function maskConversationId(value: string): string {
 
 export async function runFileReadPipeline(context: any): Promise<Response> {
   const contextConversationId = String(context.conversation_id || '');
-  const pagesHeaderConversationId = getRequestHeader(context, 'pages-agent-conversation-id');
+  const pagesHeaderConversationId = getRequestHeader(context, 'makers-conversation-id');
   const headerConversationId = getRequestHeader(context, 'conversationId');
   const conversationId = contextConversationId || pagesHeaderConversationId || headerConversationId;
   const conversationSource = contextConversationId
     ? 'context.conversation_id'
     : pagesHeaderConversationId
-      ? 'pages-agent-conversation-id'
+      ? 'makers-conversation-id'
       : headerConversationId
         ? 'conversationId'
         : 'none';

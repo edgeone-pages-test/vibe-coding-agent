@@ -350,7 +350,7 @@ type FileCopy = UiCopy['files'];
 //   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
 //     ? crypto.randomUUID()
 //     : `debug-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const DEBUG_CONVERSATION_ID = 'pages-agent-conversation-id-shirly2';
+const DEBUG_CONVERSATION_ID = 'makers-conversation-id-shirly2';
 
 function createMessageId(role: ChatMessage['role']) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -1502,7 +1502,7 @@ function FilesPanel({
       const headers: HeadersInit = {};
       const cid = conversationId || DEBUG_CONVERSATION_ID;
       if (cid) {
-        headers['pages-agent-conversation-id'] = cid;
+        headers['makers-conversation-id'] = cid;
         headers['conversationId'] = cid;
       }
       console.debug('[file-read:client]', {

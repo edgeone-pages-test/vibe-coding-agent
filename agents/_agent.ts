@@ -296,7 +296,7 @@ export async function runCodingAgent(
     const sdkOptions: Parameters<typeof query>[0]['options'] = {
       model,
       permissionMode: 'dontAsk',
-      maxTurns: 18,
+      // maxTurns: 100,
       // 禁用 Claude Code 内置本地工具，只允许模型通过 EdgeOne sandbox MCP 工具读写/执行。
       tools: [],
       mcpServers: {
