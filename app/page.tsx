@@ -347,11 +347,36 @@ type UiCopy = (typeof TRANSLATIONS)[Locale];
 type TimelineCopy = UiCopy['timeline'];
 type FileCopy = UiCopy['files'];
 
-// const DEBUG_CONVERSATION_ID =
-//   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-//     ? crypto.randomUUID()
-//     : `debug-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const DEBUG_CONVERSATION_ID = 'makers-conversation-id';
+const CONVERSATION_STORAGE_KEY = 'web-dev-agent-conversation-id';
+
+function createConversationId() {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `conversation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function getOrCreateCachedConversationId() {
+  if (typeof window === 'undefined') {
+    return createConversationId();
+  }
+
+  const stored = window.localStorage.getItem(CONVERSATION_STORAGE_KEY)?.trim();
+  if (stored) {
+    return stored;
+  }
+
+  const next = createConversationId();
+  window.localStorage.setItem(CONVERSATION_STORAGE_KEY, next);
+  return next;
+}
+
+function cacheConversationId(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || typeof window === 'undefined') {
+    return;
+  }
+  window.localStorage.setItem(CONVERSATION_STORAGE_KEY, trimmed);
+}
 
 function createMessageId(role: ChatMessage['role']) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -394,6 +419,10 @@ export default function Home() {
     if (stored === 'zh' || stored === 'en') {
       setLanguage(stored);
     }
+  }, []);
+
+  useEffect(() => {
+    setConversationId(getOrCreateCachedConversationId());
   }, []);
 
   useEffect(() => {
@@ -532,6 +561,7 @@ export default function Home() {
 
     const applyResponse = (data: ChatResponse) => {
       if (data.conversation_id) {
+        cacheConversationId(data.conversation_id);
         setConversationId(data.conversation_id);
       }
       if (data.preview) {
@@ -633,12 +663,17 @@ export default function Home() {
     };
 
     try {
+      const requestConversationId = conversationId || getOrCreateCachedConversationId();
+      if (!conversationId) {
+        setConversationId(requestConversationId);
+      }
+
       const response = await fetch('/chat', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          conversationId: DEBUG_CONVERSATION_ID,
-          'makers-conversation-id': conversationId || DEBUG_CONVERSATION_ID,
+          conversationId: requestConversationId,
+          'makers-conversation-id': requestConversationId,
         },
         body: JSON.stringify({ message: trimmed }),
       });
@@ -1503,7 +1538,7 @@ function FilesPanel({
     setPreview({ status: 'loading', path });
     try {
       const headers: HeadersInit = {};
-      const cid = conversationId || DEBUG_CONVERSATION_ID;
+      const cid = conversationId || getOrCreateCachedConversationId();
       if (cid) {
         headers['makers-conversation-id'] = cid;
         headers['conversationId'] = cid;
@@ -1512,7 +1547,7 @@ function FilesPanel({
         path,
         hasConversationId: Boolean(conversationId),
         conversationId: maskConversationIdForLog(cid),
-        conversationSource: conversationId ? 'state.conversationId' : 'DEBUG_CONVERSATION_ID',
+        conversationSource: conversationId ? 'state.conversationId' : 'localStorage',
       });
       const resp = await fetch(`/file?path=${encodeURIComponent(path)}`, {
         method: 'GET',
