@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { sanitizeAssistantText } from '../agents/utils/_text';
 
 type TimelineStep =
   | { kind: 'status'; text: string }
@@ -350,7 +351,7 @@ type FileCopy = UiCopy['files'];
 //   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
 //     ? crypto.randomUUID()
 //     : `debug-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const DEBUG_CONVERSATION_ID = 'makers-conversation-id-shirly2';
+const DEBUG_CONVERSATION_ID = 'makers-conversation-id';
 
 function createMessageId(role: ChatMessage['role']) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -1394,6 +1395,8 @@ function Spinner() {
 }
 
 function MarkdownMessage({ content }: { content: string }) {
+  const displayContent = sanitizeAssistantText(content);
+
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -1427,7 +1430,7 @@ function MarkdownMessage({ content }: { content: string }) {
         ),
       }}
     >
-      {content}
+      {displayContent}
     </ReactMarkdown>
   );
 }

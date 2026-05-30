@@ -43,6 +43,10 @@ function shortenToolName(name: string) {
   return match ? match[1] : name;
 }
 
+function isBrowserSandboxToolName(name: string) {
+  return name.toLowerCase().includes('browser');
+}
+
 function isInstallCommand(cmd: string) {
   const normalized = cmd.toLowerCase();
   return (
@@ -238,6 +242,8 @@ export async function runCodingAgent(
       throw new Error('当前 Pages Agent Runtime 缺少 context.tools.toClaudeMcpServer，请升级到支持 pages-agent-toolkit 新 Tools API 的运行时。');
     }
     const edgeoneMcp = context.tools.toClaudeMcpServer(mcpServerName, { alwaysLoad: true });
+    const sandboxTools = edgeoneMcp.tools.filter((tool) => !isBrowserSandboxToolName(tool.name));
+    const sandboxAllowedTools = edgeoneMcp.allowedTools.filter((toolName) => !isBrowserSandboxToolName(toolName));
     let projectTouched = false;
     let previewTouched = false;
     let wasCreated = false;
@@ -273,14 +279,14 @@ export async function runCodingAgent(
       },
     );
     const mcpTools = [
-      ...edgeoneMcp.tools,
+      ...sandboxTools,
       scaffoldTool,
       writeProjectFilesTool,
       publishPreviewTool,
       previewLinkTool,
     ];
     const mcpAllowedTools = [
-      ...edgeoneMcp.allowedTools,
+      ...sandboxAllowedTools,
       `mcp__${mcpServerName}__ensure_project_scaffold`,
       `mcp__${mcpServerName}__write_project_files`,
       `mcp__${mcpServerName}__publish_preview`,
@@ -309,6 +315,10 @@ export async function runCodingAgent(
       // publish_preview 工具负责启动内部 3000、确认 /preview/ 就绪并发布 getHost(9000)/preview/ 预览链接。
       cwd: process.cwd(),
       settingSources: ['project'],
+      debug: true,
+      stderr: (data: string) => {
+        console.log('[claude-code stderr]', data.trimEnd());
+      },
     };
 
     if (executablePath) {

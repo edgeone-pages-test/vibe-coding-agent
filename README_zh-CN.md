@@ -12,7 +12,7 @@
 
 - 每个会话创建或复用一个项目工作区。
 - 生成的项目文件保存在 `projects/<conversation_id>/app`。
-- 文件操作、命令执行、浏览器访问和代码执行都通过 EdgeOne 沙箱 MCP 工具完成。
+- 文件操作、命令执行和代码执行都通过 EdgeOne 沙箱 MCP 工具完成。
 
 ### Claude Agent SDK 集成
 

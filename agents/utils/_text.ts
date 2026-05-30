@@ -9,7 +9,7 @@ export function stringifyToolResult(result: unknown) {
 // SDK 在 maxTurns 截断 / claude CLI 子进程异常时，会把原始 tool_use JSON 块和
 // 终端控制序列（bracketed paste \e[200~/\e[201~、ANSI CSI）混进 resultMessage.result。
 // 这些内容如果原样回写历史，会污染下一轮 prompt（模型会模仿着继续吐 JSON）。
-// 这里集中做一次清洗：去控制序列、剥 tool_use/tool_result JSON 片段、收敛连续空行。
+// 这里集中做一次清洗：去控制序列、剥 thinking/tool JSON 片段、收敛连续空行。
 export function sanitizeAssistantText(input: string): string {
   if (!input) return '';
   let text = input;
@@ -22,15 +22,24 @@ export function sanitizeAssistantText(input: string): string {
   text = text.replace(/\x1b\][^\x07]*\x07/g, '');
   text = text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
 
-  // 4. tool_use / tool_result 原始 JSON 片段：形如
+  // 4. 模型 reasoning 泄漏片段：完整 <think>...</think> 或末尾未闭合 <think> 块。
+  text = stripThinkBlocks(text);
+
+  // 5. tool_use / tool_result 原始 JSON 片段：形如
   //    {"type":"tool_use","id":"...","name":"...","input":{...}}
   //    用括号配平算法整段抠掉，避免内嵌引号造成正则失配。
   text = stripJsonBlocksMatching(text, /\{\s*"type"\s*:\s*"(?:tool_use|tool_result)"/);
 
-  // 5. 收敛三个以上换行
+  // 6. 收敛三个以上换行
   text = text.replace(/\n{3,}/g, '\n\n');
 
   return text.trim();
+}
+
+function stripThinkBlocks(text: string): string {
+  return text
+    .replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '')
+    .replace(/<think\b[^>]*>[\s\S]*$/i, '');
 }
 
 // 从 text 中找出所有匹配 startPattern 的 JSON 对象起点，做花括号配平把整段对象删除。

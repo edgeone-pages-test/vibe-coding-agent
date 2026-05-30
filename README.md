@@ -12,7 +12,7 @@ Users describe what they want to build, and the agent prepares an isolated sandb
 
 - Creates or reuses one project workspace per conversation.
 - Keeps generated project files under `projects/<conversation_id>/app`.
-- Runs file operations, commands, browser access, and code execution through the EdgeOne sandbox MCP tools.
+- Runs file operations, commands, and code execution through the EdgeOne sandbox MCP tools.
 
 ### Claude Agent SDK integration
 
