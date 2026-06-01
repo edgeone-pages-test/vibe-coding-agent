@@ -20,6 +20,50 @@ export function createProjectState(conversationId: string): ProjectState {
   };
 }
 
+export async function resetProjectWorkspace(
+  context: any,
+  state: ProjectState,
+) {
+  assertResettableProjectPath(state);
+
+  const sandbox = context.sandbox;
+
+  await sandbox.files.makeDir(state.sessionDir);
+
+  const appDirExists = await sandbox.files.exists(state.appDir);
+  if (appDirExists) {
+    if (typeof sandbox.files.remove === 'function') {
+      await sandbox.files.remove(state.appDir);
+    } else {
+      const result = await sandbox.commands.run('rm -rf app', {
+        cwd: state.sessionDir,
+        timeout: 60,
+      });
+      if (result.exitCode !== 0) {
+        throw new Error(result.stderr || result.stdout || '项目工作区初始化失败');
+      }
+    }
+  }
+
+  await sandbox.files.makeDir(state.appDir);
+  state.created = false;
+  state.previewUrl = undefined;
+  state.sandboxDebugUrl = undefined;
+  return appDirExists;
+}
+
+function assertResettableProjectPath(state: ProjectState) {
+  if (state.appDir !== `${state.sessionDir}/app`) {
+    throw new Error(`拒绝操作异常项目路径：${state.appDir}`);
+  }
+  if (!/^projects\/[a-zA-Z0-9_-]+$/.test(state.sessionDir)) {
+    throw new Error(`拒绝操作异常会话路径：${state.sessionDir}`);
+  }
+  if (!/^projects\/[a-zA-Z0-9_-]+\/app$/.test(state.appDir)) {
+    throw new Error(`拒绝操作异常项目路径：${state.appDir}`);
+  }
+}
+
 export async function ensureProjectScaffold(
   context: any,
   state: ProjectState,

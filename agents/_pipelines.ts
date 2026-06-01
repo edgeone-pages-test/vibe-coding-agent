@@ -7,8 +7,10 @@ import {
   saveProjectState,
 } from './_memory';
 import {
+  createProjectState,
   getFileTree,
   readFileFromSandbox,
+  resetProjectWorkspace,
   runVerification,
 } from './_project';
 import type {
@@ -312,8 +314,16 @@ export async function runFileReadPipeline(context: any): Promise<Response> {
   );
 }
 
-export async function runChatPipeline(context: any, message: string, send: StreamSend) {
-  const conversationId = String(context.conversation_id || '');
+export async function runChatPipeline(
+  context: any,
+  message: string,
+  send: StreamSend,
+  options: { resetProject?: boolean } = {},
+) {
+  const contextConversationId = String(context.conversation_id || '');
+  const pagesHeaderConversationId = getRequestHeader(context, 'makers-conversation-id');
+  const headerConversationId = getRequestHeader(context, 'conversationId');
+  const conversationId = contextConversationId || pagesHeaderConversationId || headerConversationId;
 
   if (!message) {
     send({
@@ -329,15 +339,35 @@ export async function runChatPipeline(context: any, message: string, send: Strea
     return;
   }
 
-  const state = await getProjectState(context, conversationId);
-  const history = await getHistory(context, conversationId);
-  const isInitialProjectTurn = !state.created;
-  const hiddenScaffoldToolUseIds = new Set<string>();
+  if (!conversationId) {
+    send({
+      type: 'result',
+      data: {
+        ok: false,
+        conversation_id: '',
+        reply: '缺少 conversationId，无法准备项目工作区。',
+        build: { status: 'skipped' as BuildStatus },
+        preview: {},
+      },
+    });
+    return;
+  }
 
   send({
     type: 'status',
     message: '正在执行 Agent 流程',
   });
+
+  const shouldResetProject = options.resetProject === true;
+  const state = shouldResetProject
+    ? createProjectState(conversationId)
+    : await getProjectState(context, conversationId);
+  if (shouldResetProject) {
+    await resetProjectWorkspace(context, state);
+  }
+  const history = shouldResetProject ? [] : await getHistory(context, conversationId);
+  const isInitialProjectTurn = !state.created;
+  const hiddenScaffoldToolUseIds = new Set<string>();
 
   const handleScaffoldLog = (log: ScaffoldLog) => {
     if (!isInitialProjectTurn) {

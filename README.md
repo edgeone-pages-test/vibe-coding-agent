@@ -10,7 +10,7 @@ Users describe what they want to build, and the agent prepares an isolated sandb
 
 ### Sandbox-based project workspace
 
-- Creates or reuses one project workspace per conversation.
+- Starts a fresh project workspace from the home page and reuses it for follow-up turns in the coding view.
 - Keeps generated project files under `projects/<conversation_id>/app`.
 - Runs file operations, commands, and code execution through the EdgeOne sandbox MCP tools.
 
@@ -24,7 +24,7 @@ Users describe what they want to build, and the agent prepares an isolated sandb
 
 - Can create or modify lightweight web projects based on the user's request.
 - Supports Next.js, Vite/React, static frontend projects, Node services, Python Flask/FastAPI services, and similar web app stacks.
-- Reuses the existing sandbox project on later turns and applies focused changes instead of recreating the whole project.
+- Starts fresh when a new request is submitted from the home page, then reuses the existing sandbox project on later turns in the coding view and applies focused changes.
 
 ### Live preview through `/preview/`
 

@@ -475,6 +475,30 @@ export default function Home() {
       return;
     }
 
+    const isStartingFromHome = !hasWorkspace;
+    const requestConversationId = isStartingFromHome
+      ? createConversationId()
+      : conversationId || getOrCreateCachedConversationId();
+    if (isStartingFromHome) {
+      cacheConversationId(requestConversationId);
+      setConversationId(requestConversationId);
+      setPreview(null);
+      setDownload(null);
+      setBuild(null);
+      setFileTree(null);
+      setSandboxTab('preview');
+      activePreviewUrlRef.current = '';
+      activePreviewRevisionRef.current = 0;
+      previewRevisionRef.current = 0;
+      setActivePreviewUrl('');
+      setActivePreviewRevision(0);
+      setActivePreviewLoaded(false);
+      setPendingPreviewUrl('');
+      setPendingPreviewRevision(0);
+    } else if (!conversationId) {
+      setConversationId(requestConversationId);
+    }
+
     const userMessageId = createMessageId('user');
     const assistantMessageId = createMessageId('assistant');
 
@@ -663,11 +687,6 @@ export default function Home() {
     };
 
     try {
-      const requestConversationId = conversationId || getOrCreateCachedConversationId();
-      if (!conversationId) {
-        setConversationId(requestConversationId);
-      }
-
       const response = await fetch('/chat', {
         method: 'POST',
         headers: {
@@ -675,7 +694,10 @@ export default function Home() {
           conversationId: requestConversationId,
           'makers-conversation-id': requestConversationId,
         },
-        body: JSON.stringify({ message: trimmed }),
+        body: JSON.stringify({
+          message: trimmed,
+          ...(isStartingFromHome ? { resetProject: true } : {}),
+        }),
       });
 
       const contentType = response.headers.get('content-type') || '';
