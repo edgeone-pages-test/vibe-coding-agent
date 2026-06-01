@@ -747,32 +747,32 @@ export default function Home() {
         {t.languageToggleLabel}
       </button>
       {!hasWorkspace && (
-        <section className="relative isolate flex min-h-screen flex-col items-center justify-center px-5 py-16 text-center">
+        <section className="relative isolate flex min-h-screen flex-col items-center px-5 pb-16 pt-28 text-center md:pt-36 lg:pt-40">
           <div className="hero-glow" />
           <div className="aurora-band aurora-band-wide" />
           <div className="aurora-band aurora-band-slim" />
 
           <div className="relative z-10 w-full max-w-7xl">
-            <h1 className="mx-auto max-w-5xl text-balance text-[clamp(2.5rem,5.8vw,5.25rem)] font-extrabold leading-[1.08]">
+            <h1 className="mx-auto max-w-5xl text-balance text-[clamp(2.1rem,4.7vw,4.35rem)] font-extrabold leading-[1.08]">
               {t.home.titleBefore}
               {language === 'en' ? ' ' : ''}
               <span className="build-word">{t.home.titleAccent}</span>
               {language === 'en' ? ' ' : ''}
               {t.home.titleAfter}
             </h1>
-            <p className="mt-8 text-[clamp(1.05rem,1.55vw,1.75rem)] font-semibold text-[#b5c4be]">
+            <p className="mt-7 text-[clamp(0.95rem,1.15vw,1.25rem)] font-semibold text-[#b5c4be]">
               {t.home.subtitle}
             </p>
 
             <form
               onSubmit={handleSubmit}
-              className="prompt-shell mx-auto mt-20 flex w-full max-w-[1260px] flex-col text-left"
+              className="prompt-shell mx-auto mt-10 flex w-full max-w-[1260px] flex-col text-left"
             >
               <textarea
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 placeholder={t.home.placeholder}
-                className="min-h-[150px] w-full resize-none rounded-t-[20px] border-0 bg-transparent px-8 py-7 text-[clamp(1.25rem,2vw,2rem)] font-medium text-white outline-none placeholder:text-[#bac3bd]"
+                className="min-h-[180px] w-full resize-none rounded-t-[20px] border-0 bg-transparent px-8 py-7 text-[clamp(1.25rem,2vw,2rem)] font-medium text-white outline-none placeholder:text-[#bac3bd]"
               />
               <div className="flex justify-end px-6">
                 <button
