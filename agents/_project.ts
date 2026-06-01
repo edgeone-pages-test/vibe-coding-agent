@@ -40,7 +40,7 @@ export async function resetProjectWorkspace(
         timeout: 60,
       });
       if (result.exitCode !== 0) {
-        throw new Error(result.stderr || result.stdout || '项目工作区初始化失败');
+        throw new Error(result.stderr || result.stdout || 'Failed to initialize the project workspace.');
       }
     }
   }
@@ -54,13 +54,13 @@ export async function resetProjectWorkspace(
 
 function assertResettableProjectPath(state: ProjectState) {
   if (state.appDir !== `${state.sessionDir}/app`) {
-    throw new Error(`拒绝操作异常项目路径：${state.appDir}`);
+    throw new Error(`Refusing to operate on an unexpected project path: ${state.appDir}`);
   }
   if (!/^projects\/[a-zA-Z0-9_-]+$/.test(state.sessionDir)) {
-    throw new Error(`拒绝操作异常会话路径：${state.sessionDir}`);
+    throw new Error(`Refusing to operate on an unexpected session path: ${state.sessionDir}`);
   }
   if (!/^projects\/[a-zA-Z0-9_-]+\/app$/.test(state.appDir)) {
-    throw new Error(`拒绝操作异常项目路径：${state.appDir}`);
+    throw new Error(`Refusing to operate on an unexpected project path: ${state.appDir}`);
   }
 }
 
@@ -70,7 +70,7 @@ export async function ensureProjectScaffold(
   onLog?: (log: ScaffoldLog) => void,
 ) {
   const sandbox = context.sandbox;
-  onLog?.({ stream: 'status', content: `准备项目工作区 ${state.appDir}` });
+  onLog?.({ stream: 'status', content: `Preparing the project workspace ${state.appDir}` });
   
   await sandbox.files.makeDir(state.sessionDir);
   await sandbox.files.makeDir(state.appDir);
@@ -87,18 +87,18 @@ export async function ensureProjectScaffold(
     },
   );
   if (existing.exitCode !== 0) {
-    throw new Error(existing.stderr || existing.stdout || '工作区检查失败');
+    throw new Error(existing.stderr || existing.stdout || 'Workspace inspection failed.');
   }
   const sandboxInfo = context.sandbox.getInfo();
-  console.log('沙箱信息', sandboxInfo);
+  console.log('sandbox info', sandboxInfo);
 
   // 一个 conversation_id 对应一个长期复用的项目；已有业务文件时只复用，不覆盖。
   if (existing.stdout.trim()) {
-    onLog?.({ stream: 'status', content: '检测到已有工作区，跳过初始化。' });
+    onLog?.({ stream: 'status', content: 'Existing project workspace detected; skipping initialization.' });
     return false;
   }
 
-  onLog?.({ stream: 'status', content: '已准备空项目工作区，等待 Agent 生成项目文件。' });
+  onLog?.({ stream: 'status', content: 'Prepared an empty project workspace. Waiting for the agent to generate project files.' });
   
   return true;
 }
@@ -132,7 +132,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
         return {
           status: 'failed',
           stdout: hasBuildScript.stdout,
-          stderr: hasBuildScript.stderr || 'package.json 解析失败，无法判断 build 脚本。',
+          stderr: hasBuildScript.stderr || 'Failed to parse package.json; unable to determine whether a build script exists.',
         };
       }
     }
@@ -153,7 +153,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
       return {
         status: 'failed',
         stdout: pythonFiles.stdout,
-        stderr: pythonFiles.stderr || 'Python 文件检查失败。',
+        stderr: pythonFiles.stderr || 'Python file inspection failed.',
       };
     }
 
@@ -183,7 +183,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
     return {
       status: 'failed',
       stdout,
-      stderr: fatal || stderr || message || '验证失败。',
+      stderr: fatal || stderr || message || 'Verification failed.',
       ...(fatal ? { fatal: true } : {}),
     };
   }
@@ -206,7 +206,7 @@ export async function getFileTree(context: any, state: ProjectState): Promise<Fi
   );
 
   if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || '文件列表读取失败');
+    throw new Error(result.stderr || result.stdout || 'Failed to read the file list.');
   }
 
   return result.stdout
@@ -235,7 +235,7 @@ export async function resolvePublicLinks(context: any) {
   const accessToken = context.sandbox.envdAccessToken;
   const previewBaseUrl = normalizePublicUrl(previewHost);
   const sandboxDebugUrl = normalizePublicUrl(context.sandbox.browser?.liveUrl);
-  console.log('检查预览链接生成条件', {
+  console.log('checking preview link generation conditions', {
     internalPort: PREVIEW_SERVER_PORT,
     publicPort: PREVIEW_PUBLIC_PORT,
     proxyPath: PREVIEW_PATH_PREFIX,
@@ -688,7 +688,7 @@ export async function readFileFromSandbox(
 }> {
   const ext = readFileExtension(relPath);
   if (ext && PREVIEW_BINARY_EXTENSIONS.has(ext)) {
-    return { ok: false, error: `不支持预览二进制文件 (${ext})` };
+    return { ok: false, error: `Binary files cannot be previewed (${ext}).` };
   }
 
   // 走 commands.run 用 head -c 读，既能限制大小又不依赖 sandbox.files.read 的不确定签名。
@@ -702,21 +702,21 @@ export async function readFileFromSandbox(
       timeout: 15,
     });
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : '读取失败' };
+    return { ok: false, error: err instanceof Error ? err.message : 'Read failed.' };
   }
 
   if (result.exitCode !== 0) {
     const stderr = String(result.stderr || '').trim();
     if (stderr.includes('__NOTFOUND__')) {
-      return { ok: false, error: '文件不存在' };
+      return { ok: false, error: 'File does not exist.' };
     }
-    return { ok: false, error: stderr || '读取失败' };
+    return { ok: false, error: stderr || 'Read failed.' };
   }
 
   const stdout = String(result.stdout || '');
   const sepIdx = stdout.indexOf('__SEP__\n');
   if (sepIdx === -1) {
-    return { ok: false, error: '读取格式异常' };
+    return { ok: false, error: 'Unexpected read format.' };
   }
   const sizeStr = stdout.slice(0, sepIdx).trim();
   const size = Number(sizeStr) || 0;
@@ -737,7 +737,7 @@ export async function readFileFromSandbox(
     if (code < 32 || code === 127) nonPrintable += 1;
   }
   if (sample.length > 0 && nonPrintable / sample.length > 0.1) {
-    return { ok: false, error: '文件疑似二进制，已拒绝预览' };
+    return { ok: false, error: 'The file appears to be binary, so preview was refused.' };
   }
 
   return { ok: true, content, size, truncated };

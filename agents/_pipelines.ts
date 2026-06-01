@@ -58,18 +58,18 @@ function buildRequirementConclusionFallback(
   }
 
   if (status === 'ready') {
-    return `已根据你的需求完成：${summary}。预览已就绪，请在右侧预览面板查看。`;
+    return `Built this for your request: ${summary}. The preview is ready in the right preview panel.`;
   }
   if (status === 'generated') {
-    return `已根据你的需求生成了项目：${summary}。`;
+    return `Generated the project for your request: ${summary}.`;
   }
-  return `已根据你的需求处理：${summary}。正在整理验证和预览结果。`;
+  return `Handled your request: ${summary}. Verification and preview results are being prepared.`;
 }
 
 function summarizeUserRequest(request: string) {
   const normalized = request.replace(/\s+/g, ' ').trim();
   if (!normalized) {
-    return /[\u3400-\u9fff]/.test(request) ? '你的 Web 项目' : 'your web project';
+    return 'your web project';
   }
   const maxLength = 80;
   return normalized.length > maxLength
@@ -101,7 +101,7 @@ export function createStreamResponse(run: (send: StreamSend) => Promise<void>) {
         .catch((error) => {
           send({
             type: 'error',
-            error: error instanceof Error ? error.message : '请求处理失败。',
+            error: error instanceof Error ? error.message : 'Request processing failed.',
           });
         })
         .finally(() => {
@@ -331,7 +331,7 @@ export async function runChatPipeline(
       data: {
         ok: false,
         conversation_id: conversationId,
-        reply: '请先描述你想构建的页面或功能。',
+        reply: 'Please describe the page or feature you want to build first.',
         build: { status: 'skipped' as BuildStatus },
         preview: {},
       },
@@ -345,7 +345,7 @@ export async function runChatPipeline(
       data: {
         ok: false,
         conversation_id: '',
-        reply: '缺少 conversationId，无法准备项目工作区。',
+        reply: 'Missing conversationId. The project workspace cannot be prepared.',
         build: { status: 'skipped' as BuildStatus },
         preview: {},
       },
@@ -355,7 +355,7 @@ export async function runChatPipeline(
 
   send({
     type: 'status',
-    message: '正在执行 Agent 流程',
+    message: 'Running the agent workflow',
   });
 
   const shouldResetProject = options.resetProject === true;
@@ -429,7 +429,7 @@ export async function runChatPipeline(
   const pushEarlyFileTree = async () => {
     // scaffold 一成功就提前推一份 file_tree，让 Files 面板不必等本轮结束。
     // 失败不致命：本轮收尾时下面还会再推一次最终状态。
-    await pushFileTree('scaffold 后读取文件列表失败');
+    await pushFileTree('Failed to read the file list after scaffold.');
   };
 
   // 模型只负责代码层的创造性工作；下面的构建、服务步骤都保持确定性。
@@ -451,7 +451,7 @@ export async function runChatPipeline(
     : '';
   const fallbackReply = modelResult.success
     ? buildRequirementConclusionFallback(message, state.previewUrl ? 'ready' : 'pending')
-    : (modelResult.error || '处理过程中出现异常，请重试。');
+    : (modelResult.error || 'An error occurred during processing. Please try again.');
   const assistantReply = stripReturnedPreviewLinks(sanitizeAssistantText(
     modelOutput || fallbackReply
   ) || fallbackReply, state.previewUrl);
@@ -513,7 +513,7 @@ export async function runChatPipeline(
         preview: {
           url: state.previewUrl,
           sandboxDebugUrl: state.sandboxDebugUrl,
-          ...(!state.previewUrl ? { error: 'Agent 没有完成 publish_preview。' } : {}),
+          ...(!state.previewUrl ? { error: 'The agent did not complete publish_preview.' } : {}),
         },
       },
     });
@@ -537,14 +537,14 @@ export async function runChatPipeline(
     return;
   }
 
-  let fileTree = await pushFileTree('文件列表读取失败');
+  let fileTree = await pushFileTree('Failed to read the file list.');
   let build = await runVerification(context, state);
   let autoFixAttempts = 0;
   let autoFixApplied = false;
   let autoFixReply = '';
 
   if (build.fatal) {
-    const fatalReply = build.stderr || '任务失败，后续流程已终止。';
+    const fatalReply = build.stderr || 'The task failed, and the remaining workflow was stopped.';
     await appendTurn(context, conversationId, 'user', message);
     await appendTurn(context, conversationId, 'assistant', fatalReply);
     await saveProjectState(context, conversationId, state);
@@ -575,7 +575,7 @@ export async function runChatPipeline(
     autoFixApplied = true;
     send({
       type: 'status',
-      message: `验证失败，正在自动修复 1/${AUTO_FIX_MAX_ATTEMPTS}`,
+      message: `Verification failed. Running auto-fix 1/${AUTO_FIX_MAX_ATTEMPTS}`,
     });
 
     const autoFixPrompt = buildAutoFixPrompt(
@@ -616,10 +616,10 @@ export async function runChatPipeline(
       });
     }
 
-    fileTree = await pushFileTree('自动修复后读取文件列表失败');
+    fileTree = await pushFileTree('Failed to read the file list after auto-fix.');
     build = await runVerification(context, state);
     if (build.fatal) {
-      const fatalReply = build.stderr || '任务失败，后续流程已终止。';
+      const fatalReply = build.stderr || 'The task failed, and the remaining workflow was stopped.';
       await appendTurn(context, conversationId, 'user', message);
       await appendTurn(context, conversationId, 'assistant', fatalReply);
       await saveProjectState(context, conversationId, state);
@@ -667,15 +667,15 @@ export async function runChatPipeline(
 
   const autoFixSuffix = autoFixAttempts > 0
     ? build.status === 'success'
-      ? ` 已根据验证错误自动修复 ${autoFixAttempts} 轮，并已通过验证。`
-      : ` 已自动修复 ${autoFixAttempts} 轮，但验证仍失败；最终日志已保留用于继续排查。`
+      ? ` Auto-fix ran ${autoFixAttempts} time(s) based on the verification error, and verification now passes.`
+      : ` Auto-fix ran ${autoFixAttempts} time(s), but verification still fails. The final logs are preserved for further debugging.`
     : '';
   const buildFailedSuffix = build.status === 'failed' && autoFixAttempts === 0
-    ? ' 当前验证失败，我没有把它描述成已成功更新；请根据日志继续排查。'
+    ? ' Verification currently fails, so I did not describe the update as successful. Please continue debugging from the logs.'
     : '';
   const missingPreviewSuffix = state.previewUrl
     ? ''
-    : ' 未获取到预览链接，请继续要求 Agent 调用 publish_preview。';
+    : ' No preview link was obtained. Please continue by asking the agent to call publish_preview.';
   const finalFallbackReply = buildRequirementConclusionFallback(
     message,
     build.status !== 'failed' && state.previewUrl ? 'ready' : 'generated',
@@ -709,7 +709,7 @@ export async function runChatPipeline(
       preview: {
         url: state.previewUrl,
         sandboxDebugUrl: state.sandboxDebugUrl,
-        ...(!state.previewUrl ? { error: 'Agent 没有完成 publish_preview。' } : {}),
+        ...(!state.previewUrl ? { error: 'The agent did not complete publish_preview.' } : {}),
       },
     },
   });

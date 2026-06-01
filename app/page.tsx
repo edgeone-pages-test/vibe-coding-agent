@@ -1333,7 +1333,7 @@ function classifyStatusText(text: string, copy: TimelineCopy): {
   status: NormalizedStepStatus;
   summary: string;
 } | null {
-  if (/准备项目工作区|prepare the project workspace/i.test(text)) {
+  if (/准备项目工作区|prepar(?:e|ing) the project workspace/i.test(text)) {
     return { phase: 'scaffold', status: 'running', summary: copy.summaries.scaffoldRunning };
   }
   if (/检测到已有工作区|existing project workspace/i.test(text)) {
@@ -1342,7 +1342,7 @@ function classifyStatusText(text: string, copy: TimelineCopy): {
   if (/已准备空项目工作区|empty project workspace/i.test(text)) {
     return { phase: 'scaffold', status: 'done', summary: copy.summaries.scaffoldCreated };
   }
-  if (/自动修复|验证失败|auto-fix|validation/i.test(text)) {
+  if (/自动修复|验证失败|auto-fix|validation|verification/i.test(text)) {
     return { phase: 'code', status: 'running', summary: copy.summaries.codeAutoFix };
   }
   if (/已获取预览链接|预览链接已获取|preview link (found|retrieved)/i.test(text)) {

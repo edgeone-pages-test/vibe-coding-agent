@@ -228,12 +228,12 @@ async function publishPreview(
 
 async function assertPreviewableProject(context: any, state: ProjectState) {
   if (!state.created) {
-    throw new Error('当前还没有可预览项目，请先描述你想构建的页面或功能。');
+    throw new Error('There is no previewable project yet. Please describe the page or feature you want to build first.');
   }
 
   const appDirExists = await context.sandbox.files.exists(state.appDir);
   if (!appDirExists) {
-    throw new Error(`项目工作区不存在：${state.appDir}`);
+    throw new Error(`Project workspace does not exist: ${state.appDir}`);
   }
 
   const existing = await context.sandbox.commands.run(
@@ -248,9 +248,9 @@ async function assertPreviewableProject(context: any, state: ProjectState) {
     },
   );
   if (existing.exitCode !== 0) {
-    throw new Error(existing.stderr || existing.stdout || '项目工作区检查失败。');
+    throw new Error(existing.stderr || existing.stdout || 'Project workspace inspection failed.');
   }
   if (!existing.stdout.trim()) {
-    throw new Error('当前项目目录为空，请先描述你想构建的页面或功能。');
+    throw new Error('The current project directory is empty. Please describe the page or feature you want to build first.');
   }
 }

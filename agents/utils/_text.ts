@@ -111,16 +111,16 @@ export function detectFatalToolError(text: string): string | null {
   if (!trimmed) return null;
   // 严格匹配：避免把用户文件里出现 "not found" 这种字面量误判成基础设施故障。
   if (/^Not Found\.?$/i.test(trimmed)) {
-    return 'EdgeOne 沙箱接口返回 Not Found，沙箱基础设施不可用，已终止本轮 Agent。';
+    return 'The EdgeOne sandbox API returned Not Found. Sandbox infrastructure is unavailable, so this agent run was stopped.';
   }
   if (/Sandbox is not initialized/i.test(trimmed)) {
-    return 'EdgeOne 沙箱尚未初始化，已终止本轮 Agent。';
+    return 'The EdgeOne sandbox is not initialized, so this agent run was stopped.';
   }
   if (/Running instances limit exceeded(?:\s*\(max\s+\d+\))?/i.test(trimmed)) {
-    return 'EdgeOne 沙箱运行实例数已达上限，已终止本轮 Agent。';
+    return 'The EdgeOne sandbox running-instance limit has been reached, so this agent run was stopped.';
   }
   if (/Duplicate request detected\.\s*Please check your previous request result\.?/i.test(trimmed)) {
-    return 'EdgeOne 沙箱启动请求重复，已终止本轮 Agent。';
+    return 'A duplicate EdgeOne sandbox startup request was detected, so this agent run was stopped.';
   }
   return null;
 }
@@ -134,5 +134,5 @@ export function truncateForStream(text: string, max: number): string {
 export function truncateForPrompt(text: string, max: number): string {
   if (!text) return '';
   if (text.length <= max) return text;
-  return `${text.slice(0, max)}\n\n[日志已截断，剩余 ${text.length - max} 字符未包含]`;
+  return `${text.slice(0, max)}\n\n[Log truncated; ${text.length - max} characters were omitted]`;
 }
