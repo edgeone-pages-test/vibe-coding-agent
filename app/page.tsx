@@ -232,6 +232,7 @@ const TRANSLATIONS = {
     },
     files: {
       empty: '暂无文件。',
+      refreshing: '更新中...',
       selectFile: '从左侧选择一个文件以预览内容。',
       loading: (path: string) => `正在加载 ${path}...`,
       readFailed: '读取失败',
@@ -333,6 +334,7 @@ const TRANSLATIONS = {
     },
     files: {
       empty: 'No files captured yet.',
+      refreshing: 'Refreshing...',
       selectFile: 'Select a file from the left to preview its contents.',
       loading: (path: string) => `Loading ${path}...`,
       readFailed: 'Read failed',
@@ -401,6 +403,7 @@ export default function Home() {
   const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({});
   const [sandboxTab, setSandboxTab] = useState<'preview' | 'files'>('preview');
   const [fileTree, setFileTree] = useState<FileTree | null>(null);
+  const [filesRefreshing, setFilesRefreshing] = useState(false);
   const [activePreviewUrl, setActivePreviewUrl] = useState('');
   const [activePreviewRevision, setActivePreviewRevision] = useState(0);
   const [activePreviewLoaded, setActivePreviewLoaded] = useState(false);
@@ -486,6 +489,7 @@ export default function Home() {
       setDownload(null);
       setBuild(null);
       setFileTree(null);
+      setFilesRefreshing(false);
       setSandboxTab('preview');
       activePreviewUrlRef.current = '';
       activePreviewRevisionRef.current = 0;
@@ -515,7 +519,7 @@ export default function Home() {
     ]);
     // 进行中的那条消息默认展开过程；之前轮次的展开状态保留不变。
     setOpenSteps((current) => ({ ...current, [assistantMessageId]: true }));
-    setFileTree(null);
+    setFilesRefreshing(true);
     setInput('');
     setLoading(true);
     const activatedPreviewRevisions = new Map<string, number>();
@@ -600,6 +604,7 @@ export default function Home() {
       if (data.files) {
         setFileTree(data.files);
       }
+      setFilesRefreshing(false);
 
       const finalText = data.reply || data.error || t.response.noDisplay;
       const finalStatus: AssistantStatus = data.ok === false ? 'error' : 'done';
@@ -655,6 +660,7 @@ export default function Home() {
       if (event.type === 'file_tree' && event.data) {
         sawProjectActivity = true;
         setFileTree(event.data);
+        setFilesRefreshing(false);
         return;
       }
       if (event.type === 'preview_ready' && event.data) {
@@ -750,6 +756,7 @@ export default function Home() {
         return { ...current, [assistantMessageId]: false };
       });
       setLoading(false);
+      setFilesRefreshing(false);
     }
   }
 
@@ -957,6 +964,11 @@ export default function Home() {
                   >
                     {t.workspace.files}
                     {fileTree?.items.length ? ` ${fileTree.items.length}` : ''}
+                    {filesRefreshing && (
+                      <span className="ml-1 text-[10px] opacity-70">
+                        {t.files.refreshing}
+                      </span>
+                    )}
                   </button>
                 </div>
                 {download?.url && (
@@ -1014,6 +1026,7 @@ export default function Home() {
               ) : (
                 <FilesPanel
                   tree={fileTree}
+                  refreshing={filesRefreshing}
                   conversationId={conversationId}
                   copy={t.files}
                 />
@@ -1506,10 +1519,12 @@ type FilePreviewState =
 
 function FilesPanel({
   tree,
+  refreshing,
   conversationId,
   copy,
 }: {
   tree: FileTree | null;
+  refreshing: boolean;
   conversationId: string | null;
   copy: FileCopy;
 }) {
@@ -1630,7 +1645,7 @@ function FilesPanel({
   if (!tree || tree.items.length === 0) {
     return (
       <div className="flex h-full min-h-0 items-center justify-center bg-[#0b0f0d] px-6 text-center text-[#b5c4be]">
-        {copy.empty}
+        {refreshing ? copy.refreshing : copy.empty}
       </div>
     );
   }
