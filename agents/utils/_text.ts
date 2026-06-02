@@ -6,31 +6,31 @@ export function stringifyToolResult(result: unknown) {
   return typeof json === 'string' ? json : String(result);
 }
 
-// SDK 在 maxTurns 截断 / claude CLI 子进程异常时，会把原始 tool_use JSON 块和
-// 终端控制序列（bracketed paste \e[200~/\e[201~、ANSI CSI）混进 resultMessage.result。
-// 这些内容如果原样回写历史，会污染下一轮 prompt（模型会模仿着继续吐 JSON）。
-// 这里集中做一次清洗：去控制序列、剥 thinking/tool JSON 片段、收敛连续空行。
+// When maxTurns truncates or the claude CLI subprocess fails, the SDK may mix
+// raw tool_use JSON blocks and terminal control sequences into resultMessage.result.
+// Writing that content back into history pollutes the next prompt and can make
+// the model continue emitting JSON. Clean it here in one place.
 export function sanitizeAssistantText(input: string): string {
   if (!input) return '';
   let text = input;
 
-  // 1. 终端控制序列：ESC[ 数字; 数字 终止符（含 \e[200~ / \e[201~ bracketed paste）
+  // 1. Terminal control sequences: ESC[ number; number terminator, including bracketed paste markers.
   text = text.replace(/\x1b\[[0-9;?]*[~A-Za-z]/g, '');
-  // 2. 裸出现的 [200~ / [201~（ESC 已被某层吃掉，只剩括号那段）
+  // 2. Bare [200~ / [201~ markers left after ESC was stripped by an upstream layer.
   text = text.replace(/\[20[01]~/g, '');
-  // 3. 其它常见 ANSI 转义残留
+  // 3. Other common ANSI escape leftovers.
   text = text.replace(/\x1b\][^\x07]*\x07/g, '');
   text = text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
 
-  // 4. 模型 reasoning 泄漏片段：完整 <think>...</think> 或末尾未闭合 <think> 块。
+  // 4. Leaked reasoning fragments: complete <think>...</think> blocks or trailing unclosed blocks.
   text = stripThinkBlocks(text);
 
-  // 5. tool_use / tool_result 原始 JSON 片段：形如
+  // 5. Raw tool_use / tool_result JSON fragments, for example:
   //    {"type":"tool_use","id":"...","name":"...","input":{...}}
-  //    用括号配平算法整段抠掉，避免内嵌引号造成正则失配。
+  //    Remove the whole object with brace matching so nested quotes do not break regex parsing.
   text = stripJsonBlocksMatching(text, /\{\s*"type"\s*:\s*"(?:tool_use|tool_result)"/);
 
-  // 6. 收敛三个以上换行
+  // 6. Collapse three or more newlines.
   text = text.replace(/\n{3,}/g, '\n\n');
 
   return text.trim();
@@ -42,8 +42,8 @@ function stripThinkBlocks(text: string): string {
     .replace(/<think\b[^>]*>[\s\S]*$/i, '');
 }
 
-// 从 text 中找出所有匹配 startPattern 的 JSON 对象起点，做花括号配平把整段对象删除。
-// startPattern 必须能在 `{` 处匹配（即包含起始的 `{`）。
+// Find each JSON object start matching startPattern, then remove the whole
+// object using brace matching. startPattern must match at the opening `{`.
 function stripJsonBlocksMatching(text: string, startPattern: RegExp): string {
   let out = '';
   let i = 0;
@@ -58,7 +58,7 @@ function stripJsonBlocksMatching(text: string, startPattern: RegExp): string {
     const start = i + m.index;
     const end = findJsonObjectEnd(text, start);
     if (end < 0) {
-      // 配平失败，保留原样，避免把正常内容误删
+      // Keep the original content if brace matching fails to avoid removing valid text.
       out += text.slice(start);
       break;
     }
@@ -99,17 +99,17 @@ export function safeJsonString(input: unknown): string {
   }
 }
 
-// 判断一段 tool_result 文本是否表明沙箱基础设施挂了：
-// - "Not Found"：EdgeOne LazySandbox 在某些路由未初始化时的特征响应
-// - "Sandbox is not initialized"：LazySandbox 抛出的初始化错误
-// - "Running instances limit exceeded"：沙箱实例配额已满，后续重试/构建/预览都没有意义
-// - "Duplicate request detected"：沙箱启动请求重复，继续跑 agent 会污染上下文
-// 命中任意一条就视为致命错误，应立即终止本轮 agent，不再让模型重试。
+// Detect whether tool_result text indicates a sandbox infrastructure failure:
+// - "Not Found": LazySandbox's characteristic response when some routes are not initialized.
+// - "Sandbox is not initialized": LazySandbox initialization failure.
+// - "Running instances limit exceeded": sandbox instance quota is full; retries are not useful.
+// - "Duplicate request detected": duplicate sandbox startup request; continuing would pollute context.
+// Any match is fatal for the current agent run.
 export function detectFatalToolError(text: string): string | null {
   if (!text) return null;
   const trimmed = text.trim();
   if (!trimmed) return null;
-  // 严格匹配：避免把用户文件里出现 "not found" 这种字面量误判成基础设施故障。
+  // Match strictly so a literal "not found" in user files is not treated as infrastructure failure.
   if (/^Not Found\.?$/i.test(trimmed)) {
     return 'The EdgeOne sandbox API returned Not Found. Sandbox infrastructure is unavailable, so this agent run was stopped.';
   }

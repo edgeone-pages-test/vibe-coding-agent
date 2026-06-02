@@ -1,4 +1,5 @@
-// 应用 dev server 监听内部 3000；公开预览统一经沙箱 nginx 9000 的 /preview/ 反代暴露。
+// The app dev server listens on internal port 3000; public previews are exposed
+// through the sandbox nginx reverse proxy on port 9000 under /preview/.
 export const PREVIEW_SERVER_PORT = 3000;
 export const PREVIEW_PUBLIC_PORT = 9000;
 export const PREVIEW_PATH_PREFIX = '/preview/';

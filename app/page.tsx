@@ -399,7 +399,8 @@ export default function Home() {
   const [download, setDownload] = useState<LinkInfo | null>(null);
   const [build, setBuild] = useState<BuildInfo | null>(null);
   const [loading, setLoading] = useState(false);
-  // 每条 assistant 消息的「过程展开」开关：进行中的那条强制展开，结束后默认收起。
+  // Per-assistant-message progress expansion state. The running message is
+  // expanded while active, then collapsed by default.
   const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({});
   const [sandboxTab, setSandboxTab] = useState<'preview' | 'files'>('preview');
   const [fileTree, setFileTree] = useState<FileTree | null>(null);
@@ -446,7 +447,8 @@ export default function Home() {
     setPendingPreviewRevision(0);
   };
 
-  // 跨域 iframe 在某些环境下 onLoad 不会触发，3 秒后兜底关闭遮罩，避免一直空白。
+  // Cross-origin iframe onLoad may not fire in some environments. Hide the
+  // overlay after 3 seconds as a fallback to avoid a permanently blank preview.
   useEffect(() => {
     if (!activePreviewUrl || activePreviewLoaded) {
       return;
@@ -455,7 +457,8 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [activePreviewUrl, activePreviewLoaded, activePreviewRevision]);
 
-  // 后台 iframe 也保留兜底提升，避免 onLoad 未触发时旧预览永远不切换。
+  // Keep the same fallback for the background iframe so the old preview is not
+  // kept forever when onLoad does not fire.
   useEffect(() => {
     if (!pendingPreviewUrl) {
       return;
@@ -517,7 +520,7 @@ export default function Home() {
         steps: [],
       },
     ]);
-    // 进行中的那条消息默认展开过程；之前轮次的展开状态保留不变。
+    // Expand the running message by default while preserving older turn states.
     setOpenSteps((current) => ({ ...current, [assistantMessageId]: true }));
     setFilesRefreshing(true);
     setInput('');
@@ -548,8 +551,8 @@ export default function Home() {
       finalStatus: AssistantStatus,
     ) => {
       patchAssistant({ content: finalContent, status: finalStatus });
-      // 流结束默认折叠过程，但用户如果手动改过就尊重用户设置（这里直接收起即可，
-      // 因为 running 阶段的强制展开是临时的）。
+      // Collapse progress by default when the stream ends. The running-phase
+      // forced expansion is temporary.
       setOpenSteps((current) => ({ ...current, [assistantMessageId]: false }));
     };
 
@@ -623,9 +626,10 @@ export default function Home() {
       if (event.type === 'agent' && event.data) {
         const agentData = event.data;
         const text = agentData.reply || agentData.error || t.response.noDisplay;
-        // agent 事件先到，但 result 还会带最终聚合（含 build、preview）。
-        // 普通问答不会触发项目工具，此时 agent 事件已经是完整回答，可以直接结束前端等待态。
-        // 有项目工具活动时，状态仍保持 running，等 result 再 finalize。
+        // agent events can arrive before the final aggregate result with build
+        // and preview data. For plain Q&A without project tool activity, the
+        // agent event is already complete and can finish the frontend wait state.
+        // If project tools ran, keep the message running until result finalizes it.
         if (!sawProjectActivity) {
           finalizeAssistant(text, agentData.ok === false ? 'error' : 'done');
           return;
@@ -743,7 +747,7 @@ export default function Home() {
       appendStep({ kind: 'error', text: msg });
       finalizeAssistant(msg, 'error');
     } finally {
-      // 兜底：确保 running 不会因为流意外断开而卡住
+      // Fallback: ensure a running message cannot get stuck after an unexpected stream break.
       setMessages((current) =>
         current.map((item) =>
           item.id === assistantMessageId && item.status === 'running'
@@ -1068,7 +1072,7 @@ function AssistantTimeline({
     [steps, copy],
   );
 
-  // 进行中自动滚到底，让最新一步可见。
+  // Auto-scroll while running so the latest step stays visible.
   useEffect(() => {
     if (!running || !scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -1531,10 +1535,10 @@ function FilesPanel({
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(() => new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<FilePreviewState>({ status: 'idle' });
-  // 用 ref 记录最近一次发起的请求路径，回调里比对避免被慢请求覆盖。
+  // Track the latest requested path so slower responses cannot overwrite newer selections.
   const latestRequestRef = useRef<string | null>(null);
 
-  // 切换会话(file tree root 变了)时清空。
+  // Clear local file preview state when the conversation changes and the file tree root changes.
   useEffect(() => {
     setCollapsedDirs(new Set());
     setSelectedPath(null);
@@ -1611,7 +1615,7 @@ function FilesPanel({
         responseSize: data.size,
         responseTruncated: data.truncated,
       });
-      // 如果用户已经点了别的文件,丢弃这次结果。
+      // Discard this response if the user selected another file while it was loading.
       if (latestRequestRef.current !== path) {
         return;
       }

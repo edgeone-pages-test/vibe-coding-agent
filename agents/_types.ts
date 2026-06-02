@@ -53,8 +53,8 @@ export type FileTreeItem = {
   depth: number;
 };
 
-// 流给前端的过程事件：tool_use 是模型调用工具的请求，tool_result 是工具回执。
-// 前端用来在 assistant 消息里实时展示「正在做什么」。
+// Progress events streamed to the frontend. tool_use is the model's tool request,
+// and tool_result is the tool response. The assistant message renders these live.
 export type AgentProgressEvent =
   | {
       type: 'tool_use';

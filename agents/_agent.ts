@@ -106,7 +106,8 @@ function inferToolProgress(name: string, input: unknown): {
   return {};
 }
 
-// Prompt 约束模型的核心约束：理解需求 → 生成/修改项目 → 发布预览链接。
+// Prompt-level guardrails: understand the request, generate or modify the project,
+// then publish the preview link.
 export function buildPrompt(
   userMessage: string,
   history: ConversationMessage[],
@@ -178,7 +179,7 @@ export async function runCodingAgent(
   onProgress?: (event: AgentProgressEvent) => void,
   onScaffoldDone?: () => void | Promise<void>,
 ): Promise<CodingAgentResult> {
-  // 模型接入优先走 AI Gateway，再兼容 Anthropic / DeepSeek 旧配置。
+  // Prefer AI Gateway for model access, with backward-compatible Anthropic / DeepSeek config.
   const apiKey = pickEnvValue(context, 'AI_GATEWAY_API_KEY')
     || pickEnvValue(context, 'ANTHROPIC_API_KEY')
     || pickEnvValue(context, 'DEEPSEEK_API_KEY');
@@ -218,7 +219,7 @@ export async function runCodingAgent(
   const sdkEnv: Record<string, string> = {
     ANTHROPIC_BASE_URL: baseURL,
     ANTHROPIC_MODEL: model,
-    // @anthropic-ai/sdk 会把 ANTHROPIC_CUSTOM_HEADERS 注入每次模型请求。
+    // @anthropic-ai/sdk injects ANTHROPIC_CUSTOM_HEADERS into each model request.
     ANTHROPIC_CUSTOM_HEADERS: customHeaders
       ? `${customHeaders}\n${GATEWAY_QUOTA_BYPASS_HEADER}\n${GATEWAY_QUOTA_PROMPT_HEADER}`
       : `${GATEWAY_QUOTA_BYPASS_HEADER}\n${GATEWAY_QUOTA_PROMPT_HEADER}`,
@@ -303,7 +304,8 @@ export async function runCodingAgent(
       model,
       permissionMode: 'dontAsk',
       // maxTurns: 100,
-      // 禁用 Claude Code 内置本地工具，只允许模型通过 EdgeOne sandbox MCP 工具读写/执行。
+      // Disable Claude Code built-in local tools so the model can only read,
+      // write, and execute through EdgeOne sandbox MCP tools.
       tools: [],
       mcpServers: {
         [mcpServerName]: sandboxMcpServer,
@@ -312,7 +314,8 @@ export async function runCodingAgent(
       strictMcpConfig: true,
       systemPrompt: buildPrompt(userMessage, history, state, isNewProject, mcpServerName),
       env: sdkEnv,
-      // publish_preview 工具负责启动内部 3000、确认 /preview/ 就绪并发布 getHost(9000)/preview/ 预览链接。
+      // publish_preview starts the internal port 3000 service, verifies /preview/
+      // readiness, and publishes the getHost(9000)/preview/ preview link.
       cwd: process.cwd(),
       settingSources: ['project'],
       debug: true,
@@ -331,20 +334,22 @@ export async function runCodingAgent(
     });
 
     let resultMessage: SDKResultMessage | null = null;
-    // 沙箱基础设施级故障（如 EdgeOne LazySandbox 路由 Not Found）会让所有后续工具调用全部失败，
-    // 模型继续重试只会消耗 turn 并污染上下文。一旦命中就立即终止本轮 query，给上层一个明确错误。
+    // Sandbox infrastructure failures, such as EdgeOne LazySandbox routes returning
+    // Not Found, make all later tool calls fail. Retrying only consumes turns and
+    // pollutes context, so stop this query immediately with a clear upper-layer error.
     let fatalError: string | null = null;
-    // [诊断探针] 独立记录 tool_use_id -> name，用于在 tool_result 时回查，
-    // 不依赖 pendingToolUses（那个 Map 在 extractCodeSnapshotsFromEvent 里会被 delete）。
+    // Diagnostic probe: independently record tool_use_id -> name for tool_result
+    // lookup, without relying on pendingToolUses, which is deleted in extractCodeSnapshotsFromEvent.
     const probeToolNames = new Map<string, string>();
     const SCAFFOLD_TOOL_NAME = `mcp__${mcpServerName}__ensure_project_scaffold`;
-    // 一轮对话里 scaffold 最多触发一次「立即推送 file_tree」，避免重复 find。
+    // Push file_tree immediately at most once per turn after scaffold, avoiding duplicate find calls.
     let scaffoldHandled = false;
 
     for await (const event of sdkQuery as AsyncIterable<SDKMessage>) {
       console.log('event', JSON.stringify(event, null, 2));
-      // 只把结构化工具进度转给前端。模型的 thinking / 工具前自述 / tool input
-      // 都不进入 UI，避免暴露底层推理和原始 JSON。
+      // Forward only structured tool progress to the frontend. Model thinking,
+      // pre-tool narration, and tool input stay out of the UI to avoid exposing
+      // reasoning and raw JSON.
       if (event.type === 'assistant') {
         const blocks = (event as any).message?.content;
         if (Array.isArray(blocks)) {
@@ -376,7 +381,8 @@ export async function runCodingAgent(
                 ? b.content.map((c: any) => (typeof c?.text === 'string' ? c.text : '')).join(' ')
                 : (typeof b.content === 'string' ? b.content : '');
               const toolName = probeToolNames.get(b.tool_use_id) || '<unknown>';
-              // 完整 dump：tool 名 + 是否报错 + 整段 content（不截断，便于排查 exit status 1 之类的简短结果）
+              // Full dump: tool name, error flag, and complete content without truncation,
+              // useful for short failures such as exit status 1.
               // console.log(
               //   '[probe] tool_result',
               //   'tool=', toolName,
@@ -392,8 +398,8 @@ export async function runCodingAgent(
                   preview: truncateForStream(text, 500),
                 },
               });
-              // 一旦 ensure_project_scaffold 工具成功返回，立刻通知外层去推一份 file_tree，
-              // 让 Files 面板不必等 runCodingAgent 整轮结束。
+              // Once ensure_project_scaffold succeeds, notify the outer pipeline to
+              // push file_tree so the Files panel does not wait for the whole runCodingAgent turn.
               if (
                 !scaffoldHandled
                 && toolName === SCAFFOLD_TOOL_NAME
@@ -406,7 +412,8 @@ export async function runCodingAgent(
                   console.log('[scaffold-done] onScaffoldDone failed', err);
                 }
               }
-              // 沙箱基础设施级故障检测：只在 is_error=true 的工具回执上判定，避免误伤正常文本里的 "Not Found"。
+              // Detect sandbox infrastructure failures only on is_error=true tool
+              // results, avoiding false positives from normal text containing "Not Found".
               if (b.is_error === true && !fatalError) {
                 const fatal = detectFatalToolError(text);
                 if (fatal) {
@@ -425,18 +432,19 @@ export async function runCodingAgent(
         resultMessage = event;
         break;
       }
-      // 检测到致命错误就立刻退出循环，不再等模型继续 turn。
+      // Exit the loop immediately after a fatal error instead of waiting for more model turns.
       if (fatalError) {
         break;
       }
     }
 
-    // 致命错误优先于正常 result 处理：哪怕这一轮 SDK 还产出了 result，也用 fatalError 替换。
+    // Fatal errors take priority over normal results, even if the SDK produced
+    // a result for this turn.
     if (fatalError) {
       try {
         await (sdkQuery as any)?.return?.();
       } catch {
-        // 忽略：SDK 不一定支持 return()，能停就停。
+        // Ignore this because the SDK may not support return(); stop it when possible.
       }
       return {
         success: false,
@@ -460,7 +468,7 @@ export async function runCodingAgent(
       };
     }
 
-    // [probe] 打印 resultMessage 真实形状（截断），便于排查 SDK 输出污染问题。
+    // Probe the real resultMessage shape, truncated, when debugging SDK output pollution.
     try {
       const probe = JSON.stringify(resultMessage);
       // console.log('[probe] resultMessage', probe ? probe.slice(0, 4000) : '<unstringifiable>');

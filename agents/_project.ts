@@ -92,7 +92,8 @@ export async function ensureProjectScaffold(
   const sandboxInfo = context.sandbox.getInfo();
   console.log('sandbox info', sandboxInfo);
 
-  // 一个 conversation_id 对应一个长期复用的项目；已有业务文件时只复用，不覆盖。
+  // One conversation_id maps to one long-lived project. Reuse existing business
+  // files without overwriting them.
   if (existing.stdout.trim()) {
     onLog?.({ stream: 'status', content: 'Existing project workspace detected; skipping initialization.' });
     return false;
@@ -691,8 +692,9 @@ export async function readFileFromSandbox(
     return { ok: false, error: `Binary files cannot be previewed (${ext}).` };
   }
 
-  // 走 commands.run 用 head -c 读，既能限制大小又不依赖 sandbox.files.read 的不确定签名。
-  // 用单引号包裹路径并转义内含的单引号，避免 shell 注入。
+  // Read through commands.run with head -c so the size can be limited without
+  // relying on the uncertain sandbox.files.read signature. Quote the path and
+  // escape embedded single quotes to avoid shell injection.
   const safePath = relPath.replace(/'/g, "'\\''");
   const cmd = `if [ ! -f '${safePath}' ]; then echo "__NOTFOUND__" 1>&2; exit 2; fi; wc -c < '${safePath}' | tr -d ' '; echo "__SEP__"; head -c ${PREVIEW_MAX_BYTES + 1} '${safePath}'`;
   let result;
@@ -728,7 +730,8 @@ export async function readFileFromSandbox(
   } else if (size > PREVIEW_MAX_BYTES) {
     truncated = true;
   }
-  // 二进制兜底：如果开头 4KB 内有大量不可打印控制字符，视为二进制。
+  // Binary fallback: treat the file as binary if the first 4KB contains many
+  // non-printable control characters.
   const sample = content.slice(0, 4096);
   let nonPrintable = 0;
   for (let i = 0; i < sample.length; i += 1) {

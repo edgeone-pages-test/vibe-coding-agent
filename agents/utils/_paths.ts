@@ -4,7 +4,8 @@ import {
   BLOCKED_PROJECT_WRITE_SEGMENTS,
 } from '../_constants';
 
-// 会话 ID 进入沙箱目录前先收敛字符集，保证不同运行环境下路径都稳定可用。
+// Normalize conversation IDs before using them in sandbox paths so paths remain
+// stable across runtime environments.
 export function safeSegment(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
@@ -18,7 +19,8 @@ export function readFileExtension(path: string): string {
 }
 
 export function normalizeRelPath(rawPath: string): string | null {
-  // 拒绝绝对路径、空路径以及含 .. 的路径，避免逃出 appDir。
+  // Reject absolute paths, empty paths, and paths containing .. so callers
+  // cannot escape appDir.
   const trimmed = rawPath.trim();
   if (!trimmed) return null;
   if (trimmed.startsWith('/')) return null;

@@ -381,7 +381,7 @@ export async function runChatPipeline(
     });
   };
   const forwardProgress = (event: AgentProgressEvent) => {
-    // 直接转发结构化过程事件给前端，前端按 type 分支渲染。
+    // Forward structured progress events directly; the frontend renders by type.
     if (
       !isInitialProjectTurn
       && event.type === 'tool_use'
@@ -427,12 +427,13 @@ export async function runChatPipeline(
     }
   };
   const pushEarlyFileTree = async () => {
-    // scaffold 一成功就提前推一份 file_tree，让 Files 面板不必等本轮结束。
-    // 失败不致命：本轮收尾时下面还会再推一次最终状态。
+    // Push file_tree as soon as scaffold succeeds so the Files panel does not
+    // have to wait for the whole turn. Failures are non-fatal because the final
+    // state is pushed again at turn completion.
     await pushFileTree('Failed to read the file list after scaffold.');
   };
 
-  // 模型只负责代码层的创造性工作；下面的构建、服务步骤都保持确定性。
+  // The model handles creative code work; build and service steps remain deterministic.
   const modelResult = await runCodingAgent(
     context,
     message,
@@ -651,8 +652,8 @@ export async function runChatPipeline(
     ...(autoFixAttempts > 0 ? { autoFixAttempts, autoFixApplied } : {}),
   };
 
-  // 预览启动、HTTP 就绪检查和取链已合并到 publish_preview。
-  // 模型调用 publish_preview 或兼容别名 get_preview_link 后会写入 state.previewUrl / state.sandboxDebugUrl。
+  // Preview startup, HTTP readiness checks, and link generation are handled by publish_preview.
+  // publish_preview, or the legacy get_preview_link alias, writes state.previewUrl / state.sandboxDebugUrl.
   if (state.previewUrl) {
     send({
       type: 'preview_ready',
@@ -686,7 +687,7 @@ export async function runChatPipeline(
     state.previewUrl,
   );
 
-  // 先 append 本轮的两条消息（这会顺带创建 conversation），再写 projectState 到 metadata。
+  // Append this turn first, which also creates the conversation, then write projectState to metadata.
   await appendTurn(context, conversationId, 'user', message);
   await appendTurn(context, conversationId, 'assistant', reply);
   await saveProjectState(context, conversationId, state);

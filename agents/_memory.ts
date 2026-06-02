@@ -4,8 +4,8 @@ import type { ConversationMessage, ProjectState } from './_types';
 import { sanitizeAssistantText } from './utils/_text';
 
 export async function getHistory(context: any, conversationId: string): Promise<ConversationMessage[]> {
-  // context.store 只暴露 conversation 维度的消息 API，没有通用 KV。
-  // 历史就直接读取本会话的消息列表，再过滤成 user/assistant 文本对。
+  // context.store only exposes conversation-scoped message APIs, not a generic KV store.
+  // Read this conversation's messages and filter them into user/assistant text pairs.
   try {
     const messages = await context.store.getMessages({
       conversationId,
@@ -35,7 +35,8 @@ export async function appendTurn(
   role: 'user' | 'assistant',
   content: string,
 ) {
-  // assistant 内容兜底再过一遍清洗，避免新拼接逻辑把控制序列/原始 JSON 写进历史污染下一轮 prompt。
+  // Sanitize assistant content before writing history so control sequences or raw JSON
+  // from new concatenation paths do not pollute the next prompt.
   const safeContent = role === 'assistant' ? sanitizeAssistantText(content) : content;
   await context.store.appendMessage({
     conversationId,
@@ -45,7 +46,8 @@ export async function appendTurn(
 }
 
 export async function getProjectState(context: any, conversationId: string): Promise<ProjectState> {
-  // 项目状态不是会话消息，挂在 conversation metadata 上；首次访问会话还不存在时回退到默认值。
+  // Project state is conversation metadata, not a chat message. On first access,
+  // the conversation may not exist yet, so fall back to the default state.
   try {
     const conversation = await context.store.getConversation({ conversationId });
     const stored = conversation?.metadata?.projectState as ProjectState | undefined;
@@ -65,16 +67,16 @@ export async function saveProjectState(
   conversationId: string,
   state: ProjectState,
 ) {
-  // updateConversation 是浅合并 metadata；这里把 projectState 整体覆盖成最新值。
+  // updateConversation shallow-merges metadata; replace projectState as a whole.
   try {
     await context.store.updateConversation({
       conversationId,
       metadata: { projectState: state },
     });
   } catch (error: any) {
-    // 还没有任何消息写入时 conversation 尚未建立，updateConversation 会抛 MemoryNotFoundError。
-    // 此时无需特别处理：本轮稍后会通过 appendMessage 创建 conversation，
-    // 下一轮再调用 saveProjectState 时即可正常写入。
+    // If no messages have been written, the conversation does not exist yet and
+    // updateConversation throws MemoryNotFoundError. appendMessage will create it
+    // later in this turn, and the next saveProjectState call can write normally.
     if (error?.code !== 'MemoryNotFoundError') {
       throw error;
     }
