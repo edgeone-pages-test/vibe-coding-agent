@@ -557,37 +557,50 @@ export default function Home() {
     };
 
     const activatePreview = (nextPreview: LinkInfo) => {
-      setPreview(nextPreview);
-      if (nextPreview.url) {
-        setSandboxTab('preview');
-        let revision = activatedPreviewRevisions.get(nextPreview.url);
-        if (revision === undefined) {
-          revision = previewRevisionRef.current + 1;
-          previewRevisionRef.current = revision;
-          activatedPreviewRevisions.set(nextPreview.url, revision);
+      if (!nextPreview.url) {
+        if (nextPreview.error) {
+          setPreview((current) =>
+            current?.url
+              ? {
+                  ...nextPreview,
+                  url: current.url,
+                  sandboxDebugUrl: nextPreview.sandboxDebugUrl ?? current.sandboxDebugUrl,
+                }
+              : nextPreview,
+          );
         }
-
-        if (!activePreviewUrlRef.current) {
-          activePreviewUrlRef.current = nextPreview.url;
-          activePreviewRevisionRef.current = revision;
-          setActivePreviewUrl(nextPreview.url);
-          setActivePreviewRevision(revision);
-          setActivePreviewLoaded(false);
-          setPendingPreviewUrl('');
-          setPendingPreviewRevision(0);
-          return;
-        }
-
-        if (
-          activePreviewUrlRef.current === nextPreview.url
-          && activePreviewRevisionRef.current === revision
-        ) {
-          return;
-        }
-
-        setPendingPreviewUrl(nextPreview.url);
-        setPendingPreviewRevision(revision);
+        return;
       }
+
+      setPreview(nextPreview);
+      setSandboxTab('preview');
+      let revision = activatedPreviewRevisions.get(nextPreview.url);
+      if (revision === undefined) {
+        revision = previewRevisionRef.current + 1;
+        previewRevisionRef.current = revision;
+        activatedPreviewRevisions.set(nextPreview.url, revision);
+      }
+
+      if (!activePreviewUrlRef.current) {
+        activePreviewUrlRef.current = nextPreview.url;
+        activePreviewRevisionRef.current = revision;
+        setActivePreviewUrl(nextPreview.url);
+        setActivePreviewRevision(revision);
+        setActivePreviewLoaded(false);
+        setPendingPreviewUrl('');
+        setPendingPreviewRevision(0);
+        return;
+      }
+
+      if (
+        activePreviewUrlRef.current === nextPreview.url
+        && activePreviewRevisionRef.current === revision
+      ) {
+        return;
+      }
+
+      setPendingPreviewUrl(nextPreview.url);
+      setPendingPreviewRevision(revision);
     };
 
     const applyResponse = (data: ChatResponse) => {
