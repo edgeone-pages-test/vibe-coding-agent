@@ -43,6 +43,16 @@ function shortenToolName(name: string) {
   return match ? match[1] : name;
 }
 
+function extractSandboxCommand(input: unknown) {
+  const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const command = typeof record.command === 'string'
+    ? record.command
+    : typeof record.cmd === 'string'
+      ? record.cmd
+      : '';
+  return command.trim();
+}
+
 function isBrowserSandboxToolName(name: string) {
   return name.toLowerCase().includes('browser');
 }
@@ -94,8 +104,7 @@ function inferToolProgress(name: string, input: unknown): {
     };
   }
   if (toolName === 'commands') {
-    const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-    const cmd = typeof record.cmd === 'string' ? record.cmd : '';
+    const cmd = extractSandboxCommand(input);
     if (isInstallCommand(cmd)) {
       return { phaseHint: 'install' };
     }
@@ -338,9 +347,9 @@ export async function runCodingAgent(
     // Not Found, make all later tool calls fail. Retrying only consumes turns and
     // pollutes context, so stop this query immediately with a clear upper-layer error.
     let fatalError: string | null = null;
-    // Diagnostic probe: independently record tool_use_id -> name for tool_result
+    // Diagnostic probe: independently record tool_use_id -> tool context for tool_result
     // lookup, without relying on pendingToolUses, which is deleted in extractCodeSnapshotsFromEvent.
-    const probeToolNames = new Map<string, string>();
+    const probeToolContext = new Map<string, { name: string; command?: string }>();
     const SCAFFOLD_TOOL_NAME = `mcp__${mcpServerName}__ensure_project_scaffold`;
     // Push file_tree immediately at most once per turn after scaffold, avoiding duplicate find calls.
     let scaffoldHandled = false;
@@ -355,17 +364,24 @@ export async function runCodingAgent(
         if (Array.isArray(blocks)) {
           for (const b of blocks) {
             if (b?.type === 'tool_use') {
+              const toolName = typeof b.name === 'string' ? b.name : '<unknown>';
+              const shortToolName = shortenToolName(toolName);
+              const command = shortToolName === 'commands' ? extractSandboxCommand(b.input) : '';
               if (typeof b.id === 'string' && typeof b.name === 'string') {
-                probeToolNames.set(b.id, b.name);
+                probeToolContext.set(b.id, {
+                  name: b.name,
+                  ...(command ? { command } : {}),
+                });
               }
               const progress = typeof b.name === 'string'
-                ? inferToolProgress(b.name, b.input)
+                ? inferToolProgress(toolName, b.input)
                 : {};
               onProgress?.({
                 type: 'tool_use',
                 data: {
                   id: typeof b.id === 'string' ? b.id : '',
-                  name: typeof b.name === 'string' ? b.name : '<unknown>',
+                  name: toolName,
+                  ...(command ? { command } : {}),
                   ...progress,
                 },
               });
@@ -380,7 +396,8 @@ export async function runCodingAgent(
               const text = Array.isArray(b.content)
                 ? b.content.map((c: any) => (typeof c?.text === 'string' ? c.text : '')).join(' ')
                 : (typeof b.content === 'string' ? b.content : '');
-              const toolName = probeToolNames.get(b.tool_use_id) || '<unknown>';
+              const toolContext = probeToolContext.get(b.tool_use_id);
+              const toolName = toolContext?.name || '<unknown>';
               // Full dump: tool name, error flag, and complete content without truncation,
               // useful for short failures such as exit status 1.
               // console.log(
@@ -394,6 +411,8 @@ export async function runCodingAgent(
                 type: 'tool_result',
                 data: {
                   tool_use_id: typeof b.tool_use_id === 'string' ? b.tool_use_id : '',
+                  toolName,
+                  ...(toolContext?.command ? { command: toolContext.command } : {}),
                   ok: b.is_error !== true,
                   preview: truncateForStream(text, 500),
                 },

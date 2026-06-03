@@ -4,6 +4,7 @@ import {
   assertPreviewServerReady,
   ensureProjectScaffold,
   resolvePublicLinks,
+  runSandboxCommand,
   startPreviewServer,
 } from '../_project';
 import type { ClaudeMcpTool, ProjectFileInput, ProjectState, ScaffoldLog } from '../_types';
@@ -236,7 +237,8 @@ async function assertPreviewableProject(context: any, state: ProjectState) {
     throw new Error(`Project workspace does not exist: ${state.appDir}`);
   }
 
-  const existing = await context.sandbox.commands.run(
+  const existing = await runSandboxCommand(
+    context,
     [
       'find . -mindepth 1 -maxdepth 2',
       "\\( -path './node_modules' -o -path './.next' -o -path './.git' -o -path './dist' -o -path './build' \\) -prune",

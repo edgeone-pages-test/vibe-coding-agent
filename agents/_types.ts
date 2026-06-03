@@ -61,6 +61,7 @@ export type AgentProgressEvent =
       data: {
         id: string;
         name: string;
+        command?: string;
         phaseHint?: 'scaffold' | 'code' | 'install' | 'preview' | 'link';
         fileCount?: number;
       };
@@ -69,6 +70,8 @@ export type AgentProgressEvent =
       type: 'tool_result';
       data: {
         tool_use_id: string;
+        toolName?: string;
+        command?: string;
         ok: boolean;
         preview: string;
       };

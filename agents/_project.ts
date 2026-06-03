@@ -20,6 +20,94 @@ export function createProjectState(conversationId: string): ProjectState {
   };
 }
 
+type SandboxCommandOptions = {
+  cwd?: string;
+  timeout?: number;
+  [key: string]: unknown;
+};
+
+type SandboxCommandResult = {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  [key: string]: unknown;
+};
+
+export async function runSandboxCommand(
+  context: any,
+  command: string,
+  options: SandboxCommandOptions = {},
+): Promise<SandboxCommandResult> {
+  try {
+    const result = await context.sandbox.commands.run(command, options) as SandboxCommandResult;
+    const stdout = typeof result.stdout === 'string' ? result.stdout : '';
+    const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+    if (result.exitCode !== 0 && !stdout.trim() && !stderr.trim()) {
+      return {
+        ...result,
+        stdout,
+        stderr: formatSandboxCommandExit(command, options, result.exitCode),
+      };
+    }
+    return {
+      ...result,
+      stdout,
+      stderr,
+    };
+  } catch (error) {
+    throw new Error(formatSandboxCommandError(error, command, options));
+  }
+}
+
+function formatSandboxCommandExit(
+  command: string,
+  options: SandboxCommandOptions,
+  exitCode: number,
+) {
+  return [
+    `Sandbox command exited with code ${exitCode} while running: ${command}`,
+    options.cwd ? `cwd: ${options.cwd}` : '',
+    typeof options.timeout === 'number' ? `timeout: ${options.timeout}s` : '',
+  ].filter(Boolean).join('\n');
+}
+
+function formatSandboxCommandError(
+  error: unknown,
+  command: string,
+  options: SandboxCommandOptions,
+) {
+  const parts = [`Sandbox command failed while running: ${command}`];
+  if (options.cwd) {
+    parts.push(`cwd: ${options.cwd}`);
+  }
+  if (typeof options.timeout === 'number') {
+    parts.push(`timeout: ${options.timeout}s`);
+  }
+
+  const errorRecord = error && typeof error === 'object'
+    ? error as { message?: unknown; stdout?: unknown; stderr?: unknown }
+    : {};
+  const message = error instanceof Error ? error.message : String(error || '');
+  if (message) {
+    parts.push(`error: ${message}`);
+  }
+
+  const stderr = typeof errorRecord.stderr === 'string' ? errorRecord.stderr.trim() : '';
+  const stdout = typeof errorRecord.stdout === 'string' ? errorRecord.stdout.trim() : '';
+  if (stderr) {
+    parts.push(`stderr: ${truncateCommandOutput(stderr)}`);
+  }
+  if (stdout) {
+    parts.push(`stdout: ${truncateCommandOutput(stdout)}`);
+  }
+
+  return parts.join('\n');
+}
+
+function truncateCommandOutput(value: string) {
+  return value.length > 2000 ? `${value.slice(0, 2000)}...` : value;
+}
+
 export async function resetProjectWorkspace(
   context: any,
   state: ProjectState,
@@ -35,7 +123,7 @@ export async function resetProjectWorkspace(
     if (typeof sandbox.files.remove === 'function') {
       await sandbox.files.remove(state.appDir);
     } else {
-      const result = await sandbox.commands.run('rm -rf app', {
+      const result = await runSandboxCommand(context, 'rm -rf app', {
         cwd: state.sessionDir,
         timeout: 60,
       });
@@ -75,7 +163,8 @@ export async function ensureProjectScaffold(
   await sandbox.files.makeDir(state.sessionDir);
   await sandbox.files.makeDir(state.appDir);
 
-  const existing = await sandbox.commands.run(
+  const existing = await runSandboxCommand(
+    context,
     [
       'find . -mindepth 1 -maxdepth 2',
       "\\( -path './node_modules' -o -path './.next' -o -path './.git' -o -path './dist' -o -path './build' \\) -prune",
@@ -108,7 +197,8 @@ export async function runVerification(context: any, state: ProjectState): Promis
   try {
     const packageExists = await context.sandbox.files.exists(`${state.appDir}/package.json`);
     if (packageExists) {
-      const hasBuildScript = await context.sandbox.commands.run(
+      const hasBuildScript = await runSandboxCommand(
+        context,
         'node -e "const p=require(\'./package.json\'); process.exit(p.scripts && p.scripts.build ? 0 : 2)"',
         {
           cwd: state.appDir,
@@ -117,7 +207,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
       );
 
       if (hasBuildScript.exitCode === 0) {
-        const result = await context.sandbox.commands.run('npm run build', {
+        const result = await runSandboxCommand(context, 'npm run build', {
           cwd: state.appDir,
           timeout: 600,
         });
@@ -138,7 +228,8 @@ export async function runVerification(context: any, state: ProjectState): Promis
       }
     }
 
-    const pythonFiles = await context.sandbox.commands.run(
+    const pythonFiles = await runSandboxCommand(
+      context,
       [
         'find .',
         "\\( -path './node_modules' -o -path './.next' -o -path './.git' -o -path './dist' -o -path './build' -o -path './.venv' -o -path './venv' \\) -prune",
@@ -159,7 +250,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
     }
 
     if (pythonFiles.stdout.trim()) {
-      const result = await context.sandbox.commands.run('python -m compileall .', {
+      const result = await runSandboxCommand(context, 'python -m compileall .', {
         cwd: state.appDir,
         timeout: 300,
       });
@@ -194,7 +285,8 @@ export async function getFileTree(context: any, state: ProjectState): Promise<Fi
   const ignoredDirectoryPruneExpression = FILE_TREE_IGNORED_DIRECTORIES
     .map((dir) => `-path './${dir}'`)
     .join(' -o ');
-  const result = await context.sandbox.commands.run(
+  const result = await runSandboxCommand(
+    context,
     [
       'find .',
       `\\( ${ignoredDirectoryPruneExpression} \\) -prune`,
@@ -419,7 +511,8 @@ async function assertNextPreviewConfig(context: any, state: ProjectState) {
     if (!(await context.sandbox.files.exists(`${state.appDir}/${filename}`))) {
       continue;
     }
-    const result = await context.sandbox.commands.run(
+    const result = await runSandboxCommand(
+      context,
       `node -e ${shellQuote(`const fs=require('fs'); const s=fs.readFileSync(${JSON.stringify(filename)}, 'utf8'); process.exit(/basePath\\s*:/.test(s) && /EDGEONE_PREVIEW_BASE_PATH/.test(s) ? 0 : 2);`)}`,
       {
         cwd: state.appDir,
@@ -450,7 +543,8 @@ type PreviewStartCommand = {
 
 export async function startPreviewServer(context: any, state: ProjectState) {
   const port = PREVIEW_SERVER_PORT;
-  const release = await context.sandbox.commands.run(
+  const release = await runSandboxCommand(
+    context,
     [
       'if command -v fuser >/dev/null 2>&1; then',
       `fuser -k ${port}/tcp 2>/dev/null || true;`,
@@ -467,7 +561,8 @@ export async function startPreviewServer(context: any, state: ProjectState) {
   }
 
   const start = await detectPreviewStartCommand(context, state);
-  const startResult = await context.sandbox.commands.run(
+  const startResult = await runSandboxCommand(
+    context,
     `: > /tmp/dev.log; ${start.command}`,
     {
       cwd: state.appDir,
@@ -479,7 +574,8 @@ export async function startPreviewServer(context: any, state: ProjectState) {
     throw new Error(startResult.stderr || startResult.stdout || `Failed to start preview server on port ${port}.`);
   }
 
-  const ready = await context.sandbox.commands.run(
+  const ready = await runSandboxCommand(
+    context,
     [
       `for i in $(seq 1 30); do curl -fsS ${shellQuote(`http://127.0.0.1:${port}${start.readyPath}`)} >/dev/null && exit 0; sleep 1; done;`,
       `echo "Preview server did not become ready on port ${port}${start.readyPath}" >&2;`,
@@ -505,7 +601,8 @@ export async function startPreviewServer(context: any, state: ProjectState) {
 }
 
 export async function assertPreviewServerReady(context: any, readyPath = PREVIEW_PATH_PREFIX) {
-  const result = await context.sandbox.commands.run(
+  const result = await runSandboxCommand(
+    context,
     `curl -fsS ${shellQuote(`http://127.0.0.1:${PREVIEW_SERVER_PORT}${readyPath}`)} >/dev/null`,
     { timeout: 10 },
   );
@@ -596,7 +693,8 @@ async function readPackageMetadata(
   scripts?: Record<string, string>;
   deps?: Record<string, string>;
 }> {
-  const result = await context.sandbox.commands.run(
+  const result = await runSandboxCommand(
+    context,
     [
       'node -e "',
       'const fs=require(\'fs\');',
@@ -626,7 +724,8 @@ async function detectPythonPreviewCommand(
   state: ProjectState,
 ): Promise<PreviewStartCommand | null> {
   const port = PREVIEW_SERVER_PORT;
-  const result = await context.sandbox.commands.run(
+  const result = await runSandboxCommand(
+    context,
     [
       'if [ -f main.py ] && grep -q "FastAPI(" main.py 2>/dev/null; then echo fastapi:main; exit 0; fi;',
       'if [ -f app.py ] && grep -q "FastAPI(" app.py 2>/dev/null; then echo fastapi:app; exit 0; fi;',
@@ -699,7 +798,7 @@ export async function readFileFromSandbox(
   const cmd = `if [ ! -f '${safePath}' ]; then echo "__NOTFOUND__" 1>&2; exit 2; fi; wc -c < '${safePath}' | tr -d ' '; echo "__SEP__"; head -c ${PREVIEW_MAX_BYTES + 1} '${safePath}'`;
   let result;
   try {
-    result = await context.sandbox.commands.run(cmd, {
+    result = await runSandboxCommand(context, cmd, {
       cwd: state.appDir,
       timeout: 15,
     });

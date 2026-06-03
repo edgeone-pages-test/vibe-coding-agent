@@ -7,8 +7,8 @@ import { sanitizeAssistantText } from '../agents/utils/_text';
 
 type TimelineStep =
   | { kind: 'status'; text: string }
-  | { kind: 'tool_use'; id: string; name: string; phaseHint?: NormalizedStepPhase; fileCount?: number }
-  | { kind: 'tool_result'; toolUseId: string; ok: boolean; preview: string }
+  | { kind: 'tool_use'; id: string; name: string; command?: string; phaseHint?: NormalizedStepPhase; fileCount?: number }
+  | { kind: 'tool_result'; toolUseId: string; toolName?: string; command?: string; ok: boolean; preview: string }
   | { kind: 'log'; stream: 'stdout' | 'stderr' | 'status'; text: string }
   | { kind: 'error'; text: string };
 
@@ -103,6 +103,7 @@ type ChatStreamEvent =
       data?: {
         id?: string;
         name?: string;
+        command?: string;
         phaseHint?: NormalizedStepPhase;
         fileCount?: number;
       };
@@ -111,6 +112,8 @@ type ChatStreamEvent =
       type: 'tool_result';
       data?: {
         tool_use_id?: string;
+        toolName?: string;
+        command?: string;
         ok?: boolean;
         preview?: string;
       };
@@ -216,6 +219,7 @@ const TRANSLATIONS = {
         installRunning: '正在安装项目依赖',
         installDone: '项目依赖安装完成',
         installFailed: '依赖安装失败',
+        commandFailed: (command: string, detail: string) => `命令失败：${command}${detail ? `。${detail}` : ''}`,
         previewRunning: '正在启动本地预览服务',
         previewWarmup: '正在预热预览页面',
         previewStarted: '预览服务已启动',
@@ -318,6 +322,7 @@ const TRANSLATIONS = {
         installRunning: 'Installing project dependencies',
         installDone: 'Project dependencies installed',
         installFailed: 'Dependency installation failed',
+        commandFailed: (command: string, detail: string) => `Command failed: ${command}${detail ? `. ${detail}` : ''}`,
         previewRunning: 'Starting the local preview server',
         previewWarmup: 'Warming up the preview page',
         previewStarted: 'Preview server started',
@@ -659,6 +664,7 @@ export default function Home() {
           kind: 'tool_use',
           id: event.data.id || '',
           name: event.data.name || '<unknown>',
+          command: event.data.command,
           phaseHint: event.data.phaseHint,
           fileCount: event.data.fileCount,
         });
@@ -669,6 +675,8 @@ export default function Home() {
         appendStep({
           kind: 'tool_result',
           toolUseId: event.data.tool_use_id || '',
+          toolName: event.data.toolName,
+          command: event.data.command,
           ok: event.data.ok !== false,
           preview: event.data.preview || '',
         });
@@ -1121,6 +1129,7 @@ function AssistantTimeline({
 function normalizeTimelineSteps(steps: TimelineStep[], copy: TimelineCopy): NormalizedStep[] {
   const byPhase = new Map<NormalizedStepPhase, NormalizedStep>();
   const phaseByToolUseId = new Map<string, NormalizedStepPhase>();
+  const commandByToolUseId = new Map<string, string>();
 
   const ensureStep = (phase: NormalizedStepPhase) => {
     const existing = byPhase.get(phase);
@@ -1153,6 +1162,9 @@ function normalizeTimelineSteps(steps: TimelineStep[], copy: TimelineCopy): Norm
 
   for (const step of steps) {
     if (step.kind === 'tool_use') {
+      if (step.command) {
+        commandByToolUseId.set(step.id, step.command);
+      }
       const classification = classifyToolUse(step, copy);
       if (!classification) {
         continue;
@@ -1163,7 +1175,8 @@ function normalizeTimelineSteps(steps: TimelineStep[], copy: TimelineCopy): Norm
     }
 
     if (step.kind === 'tool_result') {
-      const phase = phaseByToolUseId.get(step.toolUseId);
+      const command = step.command || commandByToolUseId.get(step.toolUseId) || '';
+      const phase = phaseByToolUseId.get(step.toolUseId) || (!step.ok && command ? 'code' : undefined);
       if (!phase) {
         continue;
       }
@@ -1173,7 +1186,7 @@ function normalizeTimelineSteps(steps: TimelineStep[], copy: TimelineCopy): Norm
       updateStep(
         phase,
         step.ok ? 'done' : 'error',
-        summarizeToolResult(phase, step.ok, step.preview, copy),
+        summarizeToolResult(phase, step.ok, step.preview, copy, command),
       );
       continue;
     }
@@ -1322,9 +1335,18 @@ function getRunningSummary(phase: NormalizedStepPhase, copy: TimelineCopy) {
   return copy.summaries.linkRunning;
 }
 
-function summarizeToolResult(phase: NormalizedStepPhase, ok: boolean, preview: string, copy: TimelineCopy) {
+function summarizeToolResult(
+  phase: NormalizedStepPhase,
+  ok: boolean,
+  preview: string,
+  copy: TimelineCopy,
+  command = '',
+) {
   if (!ok) {
-    return compactErrorSummary(preview, copy.summaries.stepFailed(getStepTitle(phase, copy)));
+    const detail = compactErrorSummary(preview, copy.summaries.stepFailed(getStepTitle(phase, copy)));
+    return command
+      ? copy.summaries.commandFailed(compactCommandSummary(command), detail)
+      : detail;
   }
 
   if (phase === 'scaffold') {
@@ -1460,6 +1482,11 @@ function compactErrorSummary(value: string, fallback: string) {
     return fallback;
   }
   return cleaned.length > 140 ? `${cleaned.slice(0, 140)}...` : cleaned;
+}
+
+function compactCommandSummary(value: string) {
+  const cleaned = value.replace(/\s+/g, ' ').trim();
+  return cleaned.length > 220 ? `${cleaned.slice(0, 220)}...` : cleaned;
 }
 
 function getStepTitle(phase: NormalizedStepPhase, copy: TimelineCopy) {
