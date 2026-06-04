@@ -139,7 +139,8 @@ type ChatStreamEvent =
 type Locale = 'zh' | 'en';
 
 const LANGUAGE_STORAGE_KEY = 'web-dev-agent-language';
-const DEPLOY_URL = 'https://edgeone.ai/makers/new?template=web-dev-agent&from=within&fromAgent=1&agentLang=typescript';
+const { domain } = extractProjectName();
+const DEPLOY_URL = domain === 'edgeone.app' ? 'https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript' : 'https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
 const PHASE_ORDER: NormalizedStepPhase[] = ['scaffold', 'code', 'install', 'preview', 'link'];
 
 const TRANSLATIONS = {
@@ -363,6 +364,17 @@ function createConversationId() {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `conversation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function extractProjectName() {
+  var fullUrl = window.location.href;
+  var urlObject = new URL(fullUrl);
+  var hostname = urlObject.hostname;
+  var parts = hostname.split('.');
+  return {
+    projectName: parts[0].replace('-zh', ''),
+    domain: parts.slice(1).join('.'),
+  };
 }
 
 function getOrCreateCachedConversationId() {
