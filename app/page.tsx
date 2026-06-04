@@ -827,8 +827,8 @@ export default function Home() {
     <main className="min-h-screen overflow-hidden bg-[#0a0d0b] text-white">
       <nav className="fixed inset-x-0 top-0 z-50 px-4">
         <div className="mx-auto flex h-14 max-w-[1440px] items-center justify-between gap-3">
-          <div className="min-w-0 text-sm font-semibold tracking-[0.16em] text-[#dff8ef] sm:text-base">
-            <span className="truncate">EdgeOne Makers</span>
+          <div className="min-w-0 text-sm font-semibold tracking-[0.06em] text-[#dff8ef] sm:text-base">
+            <span className="truncate">Coding Agent Starter</span>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <a
@@ -917,7 +917,6 @@ export default function Home() {
           <section className="flex min-h-0 flex-col overflow-hidden rounded-[20px] border border-white/10 bg-[#141917] shadow-2xl shadow-black/35">
             <header className="flex min-h-12 items-center gap-3 border-b border-white/10 px-4 py-2">
               <p className="shrink-0 text-sm font-semibold uppercase tracking-[0.14em] text-[#7bd8b4]">{t.workspace.conversationEyebrow}</p>
-              <h2 className="min-w-0 truncate text-sm font-semibold text-[#dff8ef]">{t.workspace.buildThread}</h2>
             </header>
 
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
@@ -1011,7 +1010,7 @@ export default function Home() {
             <header className="flex min-h-12 items-center justify-between gap-3 border-b border-white/10 px-4 py-2">
               <div className="flex min-w-0 items-center gap-3">
                 <p className="shrink-0 text-sm font-semibold uppercase tracking-[0.14em] text-[#7bd8b4]">{t.workspace.sandboxEyebrow}</p>
-                <h2 className="min-w-0 truncate text-sm font-semibold text-[#dff8ef]">
+                <h2 className="min-w-0 truncate text-[0.86em] font-semibold text-[#dff8ef]">
                   {sandboxTab === 'preview' ? t.workspace.livePreview : t.workspace.files}
                 </h2>
               </div>
