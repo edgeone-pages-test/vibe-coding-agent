@@ -818,7 +818,7 @@ export default function Home() {
               href={DEPLOY_URL}
               target="_blank"
               rel="noreferrer"
-              className="rounded-full bg-[#45b98e] px-3.5 py-1.5 text-xs font-semibold text-white shadow-lg shadow-[#45b98e]/20 transition hover:bg-[#56c99f] sm:px-4"
+              className="rounded-full bg-[#45b98e] px-3.5 py-1.5 text-xs font-semibold text-black shadow-lg shadow-[#45b98e]/20 transition hover:bg-[#56c99f] sm:px-4"
             >
               {t.deployLabel}
             </a>
