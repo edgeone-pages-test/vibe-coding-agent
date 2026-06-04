@@ -1,6 +1,7 @@
 {
   "agents": {
     "framework": "claude-sdk",
+    "timeout": 1800,
     "sandbox":{
       "timeout": 1800
     }
