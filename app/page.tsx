@@ -139,12 +139,14 @@ type ChatStreamEvent =
 type Locale = 'zh' | 'en';
 
 const LANGUAGE_STORAGE_KEY = 'web-dev-agent-language';
+const DEPLOY_URL = 'https://edgeone.ai/makers/new?template=web-dev-agent&from=within&fromAgent=1&agentLang=typescript';
 const PHASE_ORDER: NormalizedStepPhase[] = ['scaffold', 'code', 'install', 'preview', 'link'];
 
 const TRANSLATIONS = {
   zh: {
     languageToggleLabel: 'English',
     languageToggleAria: 'Switch language to English',
+    deployLabel: '一键部署',
     home: {
       titleBefore: '今天想',
       titleAccent: '创建',
@@ -248,6 +250,7 @@ const TRANSLATIONS = {
   en: {
     languageToggleLabel: '中文',
     languageToggleAria: '切换语言为中文',
+    deployLabel: 'Deploy',
     home: {
       titleBefore: 'What will you',
       titleAccent: 'create',
@@ -793,14 +796,31 @@ export default function Home() {
 
   return (
     <main className="min-h-screen overflow-hidden bg-[#0a0d0b] text-white">
-      <button
-        type="button"
-        onClick={() => setLanguage((current) => (current === 'zh' ? 'en' : 'zh'))}
-        aria-label={t.languageToggleAria}
-        className="fixed right-4 top-4 z-50 rounded-full border border-white/15 bg-[#141917]/90 px-3 py-1.5 text-xs font-semibold text-[#dff8ef] shadow-lg shadow-black/25 backdrop-blur transition hover:border-[#7bd8b4] hover:text-white"
-      >
-        {t.languageToggleLabel}
-      </button>
+      <nav className="fixed inset-x-0 top-0 z-50 px-4">
+        <div className="mx-auto flex h-14 max-w-[1440px] items-center justify-between gap-3">
+          <div className="min-w-0 text-sm font-semibold tracking-[0.16em] text-[#dff8ef] sm:text-base">
+            <span className="truncate">EdgeOne Makers</span>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <a
+              href={DEPLOY_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-full bg-[#45b98e] px-3.5 py-1.5 text-xs font-semibold text-white shadow-lg shadow-[#45b98e]/20 transition hover:bg-[#56c99f] sm:px-4"
+            >
+              {t.deployLabel}
+            </a>
+            <button
+              type="button"
+              onClick={() => setLanguage((current) => (current === 'zh' ? 'en' : 'zh'))}
+              aria-label={t.languageToggleAria}
+              className="rounded-full border border-white/15 bg-[#141917]/90 px-3 py-1.5 text-xs font-semibold text-[#dff8ef] shadow-lg shadow-black/20 transition hover:border-[#7bd8b4] hover:text-white"
+            >
+              {t.languageToggleLabel}
+            </button>
+          </div>
+        </div>
+      </nav>
       {!hasWorkspace && (
         <section className="relative isolate flex min-h-screen flex-col items-center px-5 pb-16 pt-28 text-center md:pt-36 lg:pt-40">
           <div className="hero-glow" />
@@ -808,7 +828,7 @@ export default function Home() {
           <div className="aurora-band aurora-band-slim" />
 
           <div className="relative z-10 w-full max-w-7xl">
-            <h1 className="mx-auto max-w-5xl text-balance text-[clamp(2.1rem,4.7vw,4.35rem)] font-extrabold leading-[1.08]">
+            <h1 className="mx-auto max-w-5xl text-balance text-[clamp(1.85rem,3.6vw,3.35rem)] font-extrabold leading-[1.08]">
               {t.home.titleBefore}
               {language === 'en' ? ' ' : ''}
               <span className="build-word">{t.home.titleAccent}</span>
@@ -866,9 +886,9 @@ export default function Home() {
       >
         <div className="grid h-full min-h-0 grid-rows-[minmax(0,0.44fr)_minmax(0,0.56fr)] gap-4 lg:grid-cols-[420px_minmax(0,1fr)] lg:grid-rows-1">
           <section className="flex min-h-0 flex-col overflow-hidden rounded-[20px] border border-white/10 bg-[#141917] shadow-2xl shadow-black/35">
-            <header className="border-b border-white/10 p-5">
-              <p className="text-xs uppercase tracking-[0.22em] text-[#7bd8b4]">{t.workspace.conversationEyebrow}</p>
-              <h2 className="mt-2 text-2xl font-semibold">{t.workspace.buildThread}</h2>
+            <header className="flex min-h-12 items-center gap-3 border-b border-white/10 px-4 py-2">
+              <p className="shrink-0 text-sm font-semibold uppercase tracking-[0.14em] text-[#7bd8b4]">{t.workspace.conversationEyebrow}</p>
+              <h2 className="min-w-0 truncate text-sm font-semibold text-[#dff8ef]">{t.workspace.buildThread}</h2>
             </header>
 
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
@@ -959,14 +979,14 @@ export default function Home() {
           </section>
 
           <section className="flex min-h-0 flex-col overflow-hidden rounded-[20px] border border-white/10 bg-[#141917] shadow-2xl shadow-black/35">
-            <header className="flex flex-col gap-3 border-b border-white/10 p-5 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.22em] text-[#7bd8b4]">{t.workspace.sandboxEyebrow}</p>
-                <h2 className="mt-2 text-2xl font-semibold">
+            <header className="flex min-h-12 items-center justify-between gap-3 border-b border-white/10 px-4 py-2">
+              <div className="flex min-w-0 items-center gap-3">
+                <p className="shrink-0 text-sm font-semibold uppercase tracking-[0.14em] text-[#7bd8b4]">{t.workspace.sandboxEyebrow}</p>
+                <h2 className="min-w-0 truncate text-sm font-semibold text-[#dff8ef]">
                   {sandboxTab === 'preview' ? t.workspace.livePreview : t.workspace.files}
                 </h2>
               </div>
-              <div className="flex flex-col gap-3 md:items-end">
+              <div className="flex shrink-0 items-center gap-2">
                 <div className="flex rounded-full border border-white/10 bg-black/25 p-1 text-xs">
                   <button
                     type="button"
@@ -998,15 +1018,13 @@ export default function Home() {
                   </button>
                 </div>
                 {download?.url && (
-                  <div className="flex flex-wrap items-center justify-end gap-2">
-                    <a
-                      href={download.url}
-                      download={download.filename || 'source.zip'}
-                      className="rounded-full bg-[#f2c779] px-3 py-1 text-xs font-semibold text-[#21170a] transition hover:bg-[#ffd98a]"
-                    >
-                      {t.workspace.downloadSource}
-                    </a>
-                  </div>
+                  <a
+                    href={download.url}
+                    download={download.filename || 'source.zip'}
+                    className="rounded-full bg-[#f2c779] px-3 py-1 text-xs font-semibold text-[#21170a] transition hover:bg-[#ffd98a]"
+                  >
+                    {t.workspace.downloadSource}
+                  </a>
                 )}
               </div>
             </header>
