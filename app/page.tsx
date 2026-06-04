@@ -422,6 +422,7 @@ export default function Home() {
   const t = TRANSLATIONS[language];
   const canSend = input.trim().length > 0 && !loading;
   const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build);
+  const fileCount = fileTree?.items.filter((item) => item.type === 'file').length ?? 0;
 
   useEffect(() => {
     const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
@@ -988,7 +989,7 @@ export default function Home() {
                     }`}
                   >
                     {t.workspace.files}
-                    {fileTree?.items.length ? ` ${fileTree.items.length}` : ''}
+                    {fileCount ? ` ${fileCount}` : ''}
                     {filesRefreshing && (
                       <span className="ml-1 text-[10px] opacity-70">
                         {t.files.refreshing}

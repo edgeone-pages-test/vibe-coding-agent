@@ -291,6 +291,14 @@ export async function getFileTree(context: any, state: ProjectState): Promise<Fi
       'find .',
       `\\( ${ignoredDirectoryPruneExpression} \\) -prune`,
       "-o -maxdepth 4 -print",
+      "| while IFS= read -r path; do",
+      "[ \"$path\" = \".\" ] && continue;",
+      "if [ -d \"$path\" ]; then",
+      "printf 'directory\\t%s\\n' \"$path\";",
+      "else",
+      "printf 'file\\t%s\\n' \"$path\";",
+      "fi;",
+      "done",
     ].join(' '),
     {
       cwd: state.appDir,
@@ -305,19 +313,31 @@ export async function getFileTree(context: any, state: ProjectState): Promise<Fi
   return result.stdout
     .split('\n')
     .map((line: string) => line.trim())
-    .filter((line: string) => line && line !== '.')
-    .filter((line: string) => {
-      const name = line.replace(/^\.\//, '').split('/').pop() || '';
+    .map((line: string) => {
+      const separatorIndex = line.indexOf('\t');
+      const type = separatorIndex >= 0 ? line.slice(0, separatorIndex) : '';
+      const rawPath = separatorIndex >= 0 ? line.slice(separatorIndex + 1) : '';
+      return {
+        rawPath,
+        type,
+      };
+    })
+    .filter((item: { rawPath: string; type: string }) => (
+      item.rawPath
+      && (item.type === 'file' || item.type === 'directory')
+    ))
+    .filter((item: { rawPath: string; type: string }) => {
+      const name = item.rawPath.replace(/^\.\//, '').split('/').pop() || '';
       return !FILE_TREE_IGNORED_FILENAMES.has(name);
     })
     .slice(0, 220)
-    .map((line: string) => {
-      const path = line.replace(/^\.\//, '');
+    .map((item: { rawPath: string; type: string }) => {
+      const path = item.rawPath.replace(/^\.\//, '');
       const name = path.split('/').pop() || path;
       return {
         path,
         name,
-        type: /\.[^/]+$/.test(name) ? ('file' as const) : ('directory' as const),
+        type: item.type as 'file' | 'directory',
         depth: path.split('/').length - 1,
       };
     });
