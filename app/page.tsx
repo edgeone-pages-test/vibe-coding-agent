@@ -139,8 +139,8 @@ type ChatStreamEvent =
 type Locale = 'zh' | 'en';
 
 const LANGUAGE_STORAGE_KEY = 'web-dev-agent-language';
-const { domain } = extractProjectName();
-const DEPLOY_URL = domain === 'edgeone.app' ? 'https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript' : 'https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
+const EDGEONE_AI_DEPLOY_URL = 'https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
+const TENCENT_CLOUD_DEPLOY_URL = 'https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
 const PHASE_ORDER: NormalizedStepPhase[] = ['scaffold', 'code', 'install', 'preview', 'link'];
 
 const TRANSLATIONS = {
@@ -367,6 +367,13 @@ function createConversationId() {
 }
 
 function extractProjectName() {
+  if (typeof window === 'undefined') {
+    return {
+      projectName: '',
+      domain: '',
+    };
+  }
+
   var fullUrl = window.location.href;
   var urlObject = new URL(fullUrl);
   var hostname = urlObject.hostname;
@@ -375,6 +382,10 @@ function extractProjectName() {
     projectName: parts[0].replace('-zh', ''),
     domain: parts.slice(1).join('.'),
   };
+}
+
+function getDeployUrl(domain: string) {
+  return domain === 'edgeone.app' ? EDGEONE_AI_DEPLOY_URL : TENCENT_CLOUD_DEPLOY_URL;
 }
 
 function getOrCreateCachedConversationId() {
@@ -412,6 +423,7 @@ function maskConversationIdForLog(value: string | null) {
 
 export default function Home() {
   const [language, setLanguage] = useState<Locale>('zh');
+  const [deployUrl, setDeployUrl] = useState(TENCENT_CLOUD_DEPLOY_URL);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -438,6 +450,11 @@ export default function Home() {
   const canSend = input.trim().length > 0 && !loading;
   const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build);
   const fileCount = fileTree?.items.filter((item) => item.type === 'file').length ?? 0;
+
+  useEffect(() => {
+    const { domain } = extractProjectName();
+    setDeployUrl(getDeployUrl(domain));
+  }, []);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
@@ -815,7 +832,7 @@ export default function Home() {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <a
-              href={DEPLOY_URL}
+              href={deployUrl}
               target="_blank"
               rel="noreferrer"
               className="rounded-full bg-[#45b98e] px-3.5 py-1.5 text-xs font-semibold text-black shadow-lg shadow-[#45b98e]/20 transition hover:bg-[#56c99f] sm:px-4"

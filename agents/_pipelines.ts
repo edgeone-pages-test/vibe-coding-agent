@@ -24,6 +24,12 @@ import { buildAutoFixPrompt } from './utils/_build-errors';
 import { normalizeRelPath } from './utils/_paths';
 import { sanitizeAssistantText } from './utils/_text';
 
+const SANDBOX_EXTENSION_SECONDS = 1800;
+
+type SandboxWithTimeoutExtension = {
+  extendTimeout?: (seconds: number) => unknown;
+};
+
 function stripReturnedPreviewLinks(text: string, previewUrl?: string) {
   if (!text || !previewUrl) {
     return text;
@@ -240,6 +246,27 @@ function maskConversationId(value: string): string {
   return `${value.slice(0, 6)}...${value.slice(-6)}`;
 }
 
+async function extendExistingSandboxTimeout(context: any) {
+  const sandbox = context?.sandbox as SandboxWithTimeoutExtension | undefined;
+  if (!sandbox || typeof sandbox.extendTimeout !== 'function') {
+    return;
+  }
+
+  try {
+    await sandbox.extendTimeout(SANDBOX_EXTENSION_SECONDS);
+    console.log('[sandbox]', {
+      stage: 'extend-timeout',
+      seconds: SANDBOX_EXTENSION_SECONDS,
+    });
+  } catch (error) {
+    console.warn('[sandbox]', {
+      stage: 'extend-timeout-failed',
+      seconds: SANDBOX_EXTENSION_SECONDS,
+      error: error instanceof Error ? error.message : String(error || ''),
+    });
+  }
+}
+
 export async function runFileReadPipeline(context: any): Promise<Response> {
   const contextConversationId = String(context.conversation_id || '');
   const pagesHeaderConversationId = getRequestHeader(context, 'makers-conversation-id');
@@ -352,6 +379,8 @@ export async function runChatPipeline(
     });
     return;
   }
+
+  await extendExistingSandboxTimeout(context);
 
   send({
     type: 'status',
