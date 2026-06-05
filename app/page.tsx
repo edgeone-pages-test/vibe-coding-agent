@@ -390,7 +390,7 @@ function extractProjectName() {
 }
 
 function getDeployUrl(domain: string) {
-  return domain === 'edgeone.app' ? EDGEONE_AI_DEPLOY_URL : TENCENT_CLOUD_DEPLOY_URL;
+  return domain === 'edgeone.dev' ? EDGEONE_AI_DEPLOY_URL : TENCENT_CLOUD_DEPLOY_URL;
 }
 
 function getOrCreateCachedConversationId() {
@@ -853,7 +853,7 @@ export default function Home() {
   return (
     <main className="min-h-screen overflow-hidden bg-[#0a0d0b] text-white">
       <nav className="fixed inset-x-0 top-0 z-50 px-4">
-        <div className="mx-auto flex h-14 max-w-[1440px] items-center justify-between gap-3">
+        <div className="mx-auto flex h-14 items-center justify-between gap-3">
           <div className="min-w-0 text-sm font-semibold tracking-[0.06em] text-[#dff8ef] sm:text-base">
             <span className="truncate">Coding Agent Starter</span>
           </div>
