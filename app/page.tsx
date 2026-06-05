@@ -7,6 +7,7 @@ import { sanitizeAssistantText } from '../agents/utils/_text';
 
 type TimelineStep =
   | { kind: 'status'; text: string }
+  | { kind: 'modify_marker' }
   | { kind: 'tool_use'; id: string; name: string; command?: string; phaseHint?: NormalizedStepPhase; fileCount?: number }
   | { kind: 'tool_result'; toolUseId: string; toolName?: string; command?: string; ok: boolean; preview: string }
   | { kind: 'log'; stream: 'stdout' | 'stderr' | 'status'; text: string }
@@ -14,7 +15,7 @@ type TimelineStep =
 
 type AssistantStatus = 'running' | 'done' | 'error';
 type NormalizedStepStatus = 'waiting' | 'running' | 'done' | 'error';
-type NormalizedStepPhase = 'scaffold' | 'code' | 'install' | 'preview' | 'link';
+type NormalizedStepPhase = 'scaffold' | 'modify' | 'code' | 'install' | 'preview' | 'link';
 
 type NormalizedStep = {
   phase: NormalizedStepPhase;
@@ -141,7 +142,7 @@ type Locale = 'zh' | 'en';
 const LANGUAGE_STORAGE_KEY = 'web-dev-agent-language';
 const EDGEONE_AI_DEPLOY_URL = 'https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
 const TENCENT_CLOUD_DEPLOY_URL = 'https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
-const PHASE_ORDER: NormalizedStepPhase[] = ['scaffold', 'code', 'install', 'preview', 'link'];
+const PHASE_ORDER: NormalizedStepPhase[] = ['scaffold', 'modify', 'code', 'install', 'preview', 'link'];
 
 const TRANSLATIONS = {
   zh: {
@@ -157,7 +158,7 @@ const TRANSLATIONS = {
       buildNow: '立即构建',
       building: '构建中...',
       examples: [
-        '为数据分析创业公司搭建一个 SaaS 仪表盘',
+        '做一个简洁好用的 Todolist',
         '为产品设计师创建一个作品集网站',
         '做一个带统计和主题切换的番茄钟',
       ],
@@ -204,6 +205,7 @@ const TRANSLATIONS = {
       },
       definitions: {
         scaffold: { title: '初始化沙箱', waiting: '等待准备项目工作区' },
+        modify: { title: '开始修改', waiting: '准备修改项目文件' },
         code: { title: '写代码', waiting: '等待生成或修改项目文件' },
         install: { title: '安装依赖', waiting: '等待安装项目依赖' },
         preview: { title: '启动预览', waiting: '等待启动本地预览服务' },
@@ -214,6 +216,7 @@ const TRANSLATIONS = {
         scaffoldExisting: '已复用现有项目工作区',
         scaffoldCreated: '已准备空项目工作区',
         scaffoldReady: '沙箱工作区已准备完成',
+        modifyStarted: '已开始修改项目文件',
         codeAutoFix: '正在根据验证结果修复项目代码',
         codeRunningUpdate: '正在更新项目文件',
         codeWritingFiles: (count: number) => `正在写入 ${count} 个项目文件`,
@@ -308,6 +311,7 @@ const TRANSLATIONS = {
       },
       definitions: {
         scaffold: { title: 'Initialize sandbox', waiting: 'Waiting to prepare the project workspace' },
+        modify: { title: 'Start modifying', waiting: 'Preparing to update project files' },
         code: { title: 'Write code', waiting: 'Waiting to generate or update project files' },
         install: { title: 'Install dependencies', waiting: 'Waiting to install project dependencies' },
         preview: { title: 'Start preview', waiting: 'Waiting to start the local preview server' },
@@ -318,6 +322,7 @@ const TRANSLATIONS = {
         scaffoldExisting: 'Reused the existing project workspace',
         scaffoldCreated: 'Prepared an empty project workspace',
         scaffoldReady: 'Sandbox workspace is ready',
+        modifyStarted: 'Started updating project files',
         codeAutoFix: 'Fixing project code based on validation results',
         codeRunningUpdate: 'Updating project files',
         codeWritingFiles: (count: number) => `Writing ${count} project file${count === 1 ? '' : 's'}`,
@@ -442,6 +447,7 @@ export default function Home() {
   const [activePreviewLoaded, setActivePreviewLoaded] = useState(false);
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState('');
   const [pendingPreviewRevision, setPendingPreviewRevision] = useState(0);
+  const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const activePreviewUrlRef = useRef('');
   const activePreviewRevisionRef = useRef(0);
   const previewRevisionRef = useRef(0);
@@ -450,6 +456,12 @@ export default function Home() {
   const canSend = input.trim().length > 0 && !loading;
   const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build);
   const fileCount = fileTree?.items.filter((item) => item.type === 'file').length ?? 0;
+  const latestMessage = messages[messages.length - 1];
+  const latestAssistantContent = latestMessage?.role === 'assistant' ? latestMessage.content : '';
+  const latestAssistantStatus = latestMessage?.role === 'assistant' ? latestMessage.status : '';
+  const latestAssistantStepCount = latestMessage?.role === 'assistant'
+    ? latestMessage.steps?.length ?? 0
+    : 0;
 
   useEffect(() => {
     const { domain } = extractProjectName();
@@ -471,6 +483,14 @@ export default function Home() {
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
     window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
   }, [language]);
+
+  useEffect(() => {
+    const container = conversationScrollRef.current;
+    if (!container) {
+      return;
+    }
+    container.scrollTop = container.scrollHeight;
+  }, [messages.length, latestAssistantContent, latestAssistantStatus, latestAssistantStepCount]);
 
   const promotePendingPreview = () => {
     if (!pendingPreviewUrl) {
@@ -565,6 +585,7 @@ export default function Home() {
     setLoading(true);
     const activatedPreviewRevisions = new Map<string, number>();
     let sawProjectActivity = false;
+    let insertedModifyMarker = false;
 
     const patchAssistant = (patch: Partial<ChatMessage>) => {
       setMessages((current) =>
@@ -693,14 +714,20 @@ export default function Home() {
       }
       if (event.type === 'tool_use' && event.data) {
         sawProjectActivity = true;
-        appendStep({
+        const toolUseStep: TimelineStep = {
           kind: 'tool_use',
           id: event.data.id || '',
           name: event.data.name || '<unknown>',
           command: event.data.command,
           phaseHint: event.data.phaseHint,
           fileCount: event.data.fileCount,
-        });
+        };
+        const classification = classifyToolUse(toolUseStep, t.timeline);
+        if (!isStartingFromHome && !insertedModifyMarker && classification?.phase === 'code') {
+          appendStep({ kind: 'modify_marker' });
+          insertedModifyMarker = true;
+        }
+        appendStep(toolUseStep);
         return;
       }
       if (event.type === 'tool_result' && event.data) {
@@ -919,7 +946,7 @@ export default function Home() {
               <p className="shrink-0 text-sm font-semibold uppercase tracking-[0.14em] text-[#7bd8b4]">{t.workspace.conversationEyebrow}</p>
             </header>
 
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+            <div ref={conversationScrollRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
               {messages.map((message) => {
                 if (message.role === 'user') {
                   return (
@@ -1205,9 +1232,21 @@ function normalizeTimelineSteps(steps: TimelineStep[], copy: TimelineCopy): Norm
     }
     step.status = status;
     step.summary = summary;
+    if (phase === 'code') {
+      const modifyStep = byPhase.get('modify');
+      if (modifyStep) {
+        modifyStep.status = 'done';
+        modifyStep.summary = copy.summaries.modifyStarted;
+      }
+    }
   };
 
   for (const step of steps) {
+    if (step.kind === 'modify_marker') {
+      updateStep('modify', 'running', copy.definitions.modify.waiting);
+      continue;
+    }
+
     if (step.kind === 'tool_use') {
       if (step.command) {
         commandByToolUseId.set(step.id, step.command);
