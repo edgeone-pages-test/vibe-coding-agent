@@ -7,6 +7,7 @@ import {
 import {
   DEFAULT_MODEL,
   DEFAULT_PATH,
+  GATEWAY_CONVERSATION_ID_HEADER_NAME,
   GATEWAY_QUOTA_BYPASS_HEADER,
   GATEWAY_QUOTA_PROMPT_HEADER,
   PREVIEW_PATH_PREFIX,
@@ -36,6 +37,22 @@ import {
 function pickEnvValue(context: any, key: string) {
   const value = context?.env?.[key];
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function sanitizeHeaderValue(value: string) {
+  return value.replace(/[\r\n]+/g, ' ').trim();
+}
+
+function buildAnthropicCustomHeaders(customHeaders: string, conversationId: string) {
+  const safeConversationId = sanitizeHeaderValue(conversationId);
+  return [
+    customHeaders,
+    GATEWAY_QUOTA_BYPASS_HEADER,
+    GATEWAY_QUOTA_PROMPT_HEADER,
+    safeConversationId
+      ? `${GATEWAY_CONVERSATION_ID_HEADER_NAME}: ${safeConversationId}`
+      : '',
+  ].filter(Boolean).join('\n');
 }
 
 function shortenToolName(name: string) {
@@ -181,6 +198,7 @@ export function buildPrompt(
 
 export async function runCodingAgent(
   context: any,
+  conversationId: string,
   userMessage: string,
   history: ConversationMessage[],
   state: ProjectState,
@@ -230,9 +248,7 @@ export async function runCodingAgent(
     ANTHROPIC_BASE_URL: baseURL,
     ANTHROPIC_MODEL: model,
     // @anthropic-ai/sdk injects ANTHROPIC_CUSTOM_HEADERS into each model request.
-    ANTHROPIC_CUSTOM_HEADERS: customHeaders
-      ? `${customHeaders}\n${GATEWAY_QUOTA_BYPASS_HEADER}\n${GATEWAY_QUOTA_PROMPT_HEADER}`
-      : `${GATEWAY_QUOTA_BYPASS_HEADER}\n${GATEWAY_QUOTA_PROMPT_HEADER}`,
+    ANTHROPIC_CUSTOM_HEADERS: buildAnthropicCustomHeaders(customHeaders, conversationId),
     PATH: pickEnvValue(context, 'PATH') || DEFAULT_PATH,
     HOME: pickEnvValue(context, 'HOME') || '/tmp',
     CLAUDE_CONFIG_DIR: pickEnvValue(context, 'CLAUDE_CONFIG_DIR') || '/tmp/.claude',

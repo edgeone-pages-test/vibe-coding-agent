@@ -465,6 +465,7 @@ export async function runChatPipeline(
   // The model handles creative code work; build and service steps remain deterministic.
   const modelResult = await runCodingAgent(
     context,
+    conversationId,
     message,
     history,
     state,
@@ -617,6 +618,7 @@ export async function runChatPipeline(
     );
     const autoFixResult = await runCodingAgent(
       context,
+      conversationId,
       autoFixPrompt,
       [
         ...history,

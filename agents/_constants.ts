@@ -11,6 +11,7 @@ export const DEFAULT_MODEL = '@makers/minimax-m2.7';
 export const DEFAULT_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 export const GATEWAY_QUOTA_BYPASS_HEADER = 'X-Gateway-Quota-Bypass: true';
 export const GATEWAY_QUOTA_PROMPT_HEADER = 'X-Prompt-Log: true';
+export const GATEWAY_CONVERSATION_ID_HEADER_NAME = 'Makers-Conversation-Id';
 
 export const SANDBOX_MCP_SERVER_NAME = 'edgeone-sandbox';
 
