@@ -12,12 +12,12 @@
 
 ## 概览
 
-Web Dev Agent 可以把自然语言需求转换为可运行的 Web 项目。每个会话会准备一个隔离的沙箱工作区，创建或修改项目文件，安装依赖，发布实时预览，并把验证结果反馈回 Agent 循环。它适合需要生成应用、查看预览、浏览文件的一体化 Coding 类 Makers 模板。
+Web Dev Agent 可以把自然语言需求转换为可运行的 Web 项目。每个会话会准备一个隔离的临时沙箱工作区，在其中创建或修改项目文件、安装依赖、发布实时预览，并把验证结果反馈回 Agent 循环。它适合需要生成应用、查看预览、浏览文件的一体化 Coding 类 Makers 模板。
 
-- **沙箱工作区** — 将每个会话的项目保存在 `projects/<conversation_id>/app`
+- **临时沙箱工作区** — 在当前会话对应的临时沙箱中创建和修改项目代码
 - **多技术栈生成** — 创建或更新 Next.js、Vite/React、静态页面、Node 服务、Flask/FastAPI 等轻量 Web 应用
 - **Claude Agent SDK 循环** — 使用 EdgeOne 沙箱 MCP 工具和受限工具集运行模型
-- **实时预览** — 通过沙箱公开主机上的 `/preview/` 发布生成应用
+- **实时预览** — 在临时沙箱内启动应用，并返回运行时生成的预览 URL
 - **验证反馈** — 执行构建或 Python 编译检查，验证失败时尝试一轮自动修复
 
 ## 环境变量
@@ -65,7 +65,7 @@ cp .env.example .env
 edgeone makers dev
 ```
 
-打开 `http://localhost:8080/agent-metrics` 查看本地可观测面板。
+打开 `http://localhost:8088/agent-metrics` 查看本地可观测面板。
 
 ## 项目结构
 
@@ -96,17 +96,17 @@ web-dev-agent/
 
 ## 工作原理
 
-Agent 在 `agents/` 下以会话模式运行。带有相同 `conversation_id` 的请求会路由到同一个运行时实例，并复用同一个沙箱项目工作区。
+Agent 在 `agents/` 下以会话模式运行。带有相同 `conversation_id` 的请求会路由到同一个运行时实例，并在沙箱生命周期内复用同一个临时项目工作区。
 
 1. **请求入口** — 前端携带消息和 `Markers-Conversation-Id` 请求头调用 `/chat`。从首页发起的新请求也可以设置 `resetProject: true` 来重建项目工作区。
-2. **状态恢复** — Chat pipeline 从 `context.store` 读取对话历史，并加载 `projects/<conversation_id>/app` 的项目元数据。
+2. **状态恢复** — Chat pipeline 从 `context.store` 读取对话历史，并加载当前临时沙箱项目的元数据。
 3. **LLM 与工具循环** — Claude Agent SDK 使用 `edgeone-sandbox` MCP 服务、`permissionMode: 'dontAsk'` 和仅限沙箱的工具运行。Agent 必须先调用 `ensure_project_scaffold`，再读取或写入项目文件。
 4. **项目编辑** — 生成的源码通过 `write_project_files` 或沙箱文件工具写入。命令执行和依赖安装都在沙箱内完成。
-5. **发布预览** — `publish_preview` 在内部 `3000` 端口启动应用，等待 `/preview/` 就绪，并通过 `context.sandbox.getHost(9000)` 生成公开 URL。
+5. **发布预览** — `publish_preview` 在内部 `3000` 端口启动应用，等待预览入口就绪，并返回仅在当前临时沙箱生命周期内可用的预览 URL。
 6. **验证检查** — Node 项目包含 build 脚本时运行 `npm run build`；存在 Python 文件时运行 `python -m compileall .`。如果 Agent 成功运行后验证失败，流水线会尝试一轮自动修复。
 7. **流式返回** — 前端以 NDJSON 接收状态事件、日志、工具调用、工具结果、文件树更新、预览 URL、构建状态和最终回复。
 
-文件路由为 `/file?path=<relative-path>`，并使用同一会话上下文从沙箱项目读取文本文件。沙箱凭证由运行时提供，本地无需配置沙箱凭证。沙箱生命周期由 `edgeone.json` 中的 `agents.sandbox.timeout` 控制，当前为 `1800` 秒。
+文件路由为 `/file?path=<relative-path>`，并使用同一会话上下文从临时沙箱项目读取文本文件。沙箱凭证由运行时提供，本地无需配置沙箱凭证。沙箱和其中生成的代码都是临时的，生命周期由 `edgeone.json` 中的 `agents.sandbox.timeout` 控制，当前为 `1800` 秒。
 
 ## 资源
 

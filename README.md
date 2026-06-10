@@ -12,12 +12,12 @@
 
 ## Overview
 
-Web Dev Agent turns natural-language requests into runnable web projects. For each conversation, it prepares an isolated sandbox workspace, creates or edits project files, installs dependencies, publishes a live preview, and feeds verification results back into the agent loop. Use it for coding-style Makers templates where users need a generated app, a visible preview, and a file browser in one workflow.
+Web Dev Agent turns natural-language requests into runnable web projects. For each conversation, it prepares an isolated temporary sandbox workspace where it creates or edits project files, installs dependencies, publishes a live preview, and feeds verification results back into the agent loop. Use it for coding-style Makers templates where users need a generated app, a visible preview, and a file browser in one workflow.
 
-- **Sandbox workspace** — keeps each conversation's project under `projects/<conversation_id>/app`
+- **Temporary sandbox workspace** — creates and edits project code inside the current conversation's temporary sandbox
 - **Multi-stack generation** — creates or updates Next.js, Vite/React, static, Node service, Flask/FastAPI, and similar lightweight web apps
 - **Claude Agent SDK loop** — runs the model with EdgeOne sandbox MCP tools and a restricted tool set
-- **Live preview** — publishes generated apps through `/preview/` on the sandbox public host
+- **Live preview** — starts the app inside the temporary sandbox and returns a runtime-generated preview URL
 - **Verification feedback** — runs build or Python compile checks and attempts one automatic repair pass when verification fails
 
 ## Environment Variables
@@ -65,7 +65,7 @@ cp .env.example .env
 edgeone makers dev
 ```
 
-Open `http://localhost:8080/agent-metrics` for the local observability panel.
+Open `http://localhost:8088/agent-metrics` for the local observability panel.
 
 ## Project Structure
 
@@ -96,17 +96,17 @@ Files prefixed with `_` are private modules — not exposed as public routes by 
 
 ## How It Works
 
-The agent runs in session mode under `agents/`. Requests with the same `conversation_id` are routed to the same runtime instance and reuse the same sandbox project workspace.
+The agent runs in session mode under `agents/`. Requests with the same `conversation_id` are routed to the same runtime instance and reuse the same temporary project workspace for the sandbox lifetime.
 
 1. **Request** — the frontend calls `/chat` with a message and the `Markers-Conversation-Id` header. A new request from the home view can also set `resetProject: true` to recreate the project workspace.
-2. **State restore** — the chat pipeline reads conversation history from `context.store` and loads project metadata for `projects/<conversation_id>/app`.
+2. **State restore** — the chat pipeline reads conversation history from `context.store` and loads metadata for the current temporary sandbox project.
 3. **LLM and tool loop** — the Claude Agent SDK runs with the `edgeone-sandbox` MCP server, `permissionMode: 'dontAsk'`, and sandbox-only tools. The agent must call `ensure_project_scaffold` before reading or writing project files.
 4. **Project editing** — generated source files are written through `write_project_files` or sandbox file tools. Commands and dependency installation run inside the sandbox.
-5. **Preview publish** — `publish_preview` starts the app on internal port `3000`, waits for `/preview/` readiness, and builds the public URL from `context.sandbox.getHost(9000)`.
+5. **Preview publish** — `publish_preview` starts the app on internal port `3000`, waits for the preview entry to become ready, and returns a preview URL that is valid only for the current temporary sandbox lifetime.
 6. **Verification** — the runtime runs `npm run build` when a Node project has a build script, or `python -m compileall .` when Python files are present. If verification fails after a successful agent run, the pipeline attempts one auto-fix pass.
 7. **Response stream** — the frontend receives status events, logs, tool calls, tool results, file tree updates, the preview URL, build status, and the final assistant reply as newline-delimited JSON.
 
-The file route is `/file?path=<relative-path>` and uses the same conversation context to read text files from the sandbox project. Sandbox credentials are provided by the runtime; no local sandbox credentials are required. Sandbox lifetime is controlled by `agents.sandbox.timeout` in `edgeone.json`, currently set to `1800` seconds.
+The file route is `/file?path=<relative-path>` and uses the same conversation context to read text files from the temporary sandbox project. Sandbox credentials are provided by the runtime; no local sandbox credentials are required. The sandbox and generated code are temporary, and their lifetime is controlled by `agents.sandbox.timeout` in `edgeone.json`, currently set to `1800` seconds.
 
 ## Resources
 
