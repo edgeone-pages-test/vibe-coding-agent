@@ -108,9 +108,9 @@ The file route is `/file?path=<relative-path>` and uses the same conversation co
 
 ## Resources
 
-- [Makers Agents Documentation](https://edgeone.ai/document/agents)
-- [Quick Start: Agent Development](https://edgeone.ai/document/agents-quickstart)
-- [Makers Models](https://edgeone.ai/document/models)
+- [Makers Agents Documentation](https://pages.edgeone.ai/document/agents)
+- [Quick Start: Agent Development](https://pages.edgeone.ai/document/agents-quickstart)
+- [Makers Models](https://pages.edgeone.ai/document/models)
 
 ## License
 
