@@ -108,9 +108,9 @@ Agent 在 `agents/` 下以会话模式运行。带有相同 `conversation_id` �
 
 ## 资源
 
-- [Makers Agents 文档](https://pages.edgeone.ai/document/agents)
-- [Agent 开发快速开始](https://pages.edgeone.ai/document/agents-quickstart)
-- [Makers Models](https://pages.edgeone.ai/document/models)
+- [Makers Agents 文档](https://cloud.tencent.com/document/product/1552/132759)
+- [Agent 开发快速开始](https://cloud.tencent.com/document/product/1552/132786)
+- [Makers Models](https://cloud.tencent.com/document/product/1552/132748)
 
 ## 许可证
 
