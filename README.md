@@ -1,7 +1,5 @@
 # Web Dev Agent
 
-**Language:** English | [简体中文](./README_zh-CN.md)
-
 > A sandbox-based web development agent built with the Claude Agent SDK on EdgeOne Makers.
 
 **Framework:** Claude Agent SDK · **Category:** Coding <!-- TODO: confirm --> · **Language:** TypeScript
